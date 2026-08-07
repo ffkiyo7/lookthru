@@ -1,0 +1,140 @@
+@import 'tailwindcss';
+
+/*
+ * 设计令牌 —— 取自 Claude Design 的 5 份设计稿。
+ * 改动这里会影响全部页面，改之前先对照设计稿。
+ */
+
+/* 涨跌配色：中国惯例红涨绿跌，可在设置页翻转。
+   这两个变量被 @theme 的 --color-up/--color-down 引用，
+   翻转 data-updown 即可让全站配色跟着变，无需组件感知。 */
+:root {
+  --updown-up: #ef4444;
+  --updown-down: #22c55e;
+}
+:root[data-updown='green-up'] {
+  --updown-up: #22c55e;
+  --updown-down: #ef4444;
+}
+
+@theme {
+  /* 容器层级 */
+  --color-root: #050608;
+  --color-page: #0a0b0e;
+  --color-card: #14161b;
+  --color-inset: #0e1013;
+  --color-raised: #191b20;
+  --color-chip: #22242b;
+  --color-circle: #15171c;
+  --color-sheet: #16181d;
+  --color-key: #2b2e36;
+
+  /* 文字梯度 */
+  --color-ink: #f2f3f5;
+  --color-ink-strong: #e6e7ea;
+  --color-ink-soft: #d3d6dc;
+  --color-ink-body: #c3c7ce;
+  --color-ink-muted: #8b8f98;
+  --color-ink-dim: #7a7e87;
+  --color-ink-dimmer: #6b7078;
+  --color-ink-faint: #63676f;
+  --color-ink-faintest: #5f636b;
+
+  /* 涨跌（跟随 data-updown 翻转） */
+  --color-up: var(--updown-up);
+  --color-down: var(--updown-down);
+  /* 固定语义色，不随涨跌配色翻转 */
+  --color-danger: #ef4444;
+  --color-success: #22c55e;
+
+  /* 强调 */
+  --color-accent: #8b7cf0;
+  --color-accent-soft: #a99bf5;
+  --color-accent-dim: #9a8fca;
+  --color-warn: #f0b866;
+  --color-info: #7aa2f7;
+
+  /* 推送渠道品牌色 */
+  --color-feishu: #3370ff;
+  --color-telegram: #29a9eb;
+  --color-discord: #5865f2;
+
+  /* 行业分类调色板（穿透页环形图） */
+  --color-sector-1: #8b7cf0;
+  --color-sector-2: #f0b866;
+  --color-sector-3: #6ba3f0;
+  --color-sector-4: #d98bd0;
+  --color-sector-5: #4a5568;
+
+  /* 描边 */
+  --color-line: rgb(255 255 255 / 0.055);
+  --color-line-soft: rgb(255 255 255 / 0.05);
+  --color-line-faint: rgb(255 255 255 / 0.04);
+  --color-line-strong: rgb(255 255 255 / 0.08);
+  --color-line-card: rgb(255 255 255 / 0.07);
+
+  /*
+   * 不用 Google Fonts 的 Noto Sans SC —— 大陆访问被墙，每次加载都会卡在一个
+   * 必然失败的请求上再回退。PingFang SC / 思源黑体与 Noto Sans SC 同源，
+   * 系统字体视觉等价，还省掉 ~2MB CJK 字体下载。
+   */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Noto Sans SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', system-ui, sans-serif;
+}
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    background: var(--color-root);
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-page);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    /* 金融数字必须等宽对齐，否则滚动时数字会跳 */
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior-y: none;
+  }
+
+  /* 移动端隐藏滚动条，但保留滚动能力 */
+  ::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  button {
+    font-family: inherit;
+    font-variant-numeric: inherit;
+  }
+
+  input {
+    font-family: inherit;
+  }
+}
+
+@utility safe-bottom {
+  padding-bottom: calc(env(safe-area-inset-bottom) + var(--tw-safe-extra, 0px));
+}
+
+@keyframes ecpulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
+
+@utility animate-ecpulse {
+  animation: ecpulse 1.8s ease-in-out infinite;
+}

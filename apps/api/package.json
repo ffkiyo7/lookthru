@@ -1,0 +1,14 @@
+{
+  "name": "@qd2/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --config ../../wrangler.toml"
+  },
+  "dependencies": {
+    "@qd2/shared": "*",
+    "hono": "^4.13.0",
+    "zod": "^4.4.3"
+  }
+}

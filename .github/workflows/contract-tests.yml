@@ -1,0 +1,31 @@
+name: 上游契约测试
+
+# 东财/新浪的端点没有任何合约，随时可能变结构或下线
+# （fundgz 的盘中估值就是这么没的）。每日跑一次真实端点测试是唯一的早期预警。
+on:
+  schedule:
+    - cron: '0 1 * * *' # 北京时间 09:00
+  workflow_dispatch:
+  push:
+    paths:
+      - 'apps/api/src/sources/**'
+      - 'tests/**'
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - name: 真实端点契约测试
+        run: npm run test:live
+      - name: 解析器失效告警
+        if: failure()
+        run: |
+          echo "::error::上游数据源契约被破坏 —— 检查 apps/api/src/sources/ 下的解析器"
+          echo "对照 plan「七、风险与退路」：应启用多源 fallback（东财 → 新浪 → 蛋卷）"
