@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from './env';
 import { PASS_THRESHOLD, probeStats, runProbe } from './probe';
-import { fetchHoldings, fetchQuotes, searchFunds } from './sources';
+import { fetchHoldings, fetchQuotesResilient, searchFunds } from './sources';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -47,7 +47,13 @@ app.get('/api/funds/:code/holdings', async (c) => {
 app.get('/api/quotes', async (c) => {
   const secids = (c.req.query('secids') ?? '').split(',').filter(Boolean);
   if (secids.length === 0) return c.json({ error: 'missing secids' }, 400);
-  return c.json(Object.fromEntries(await fetchQuotes(secids)));
+  const r = await fetchQuotesResilient(secids);
+  // provider / delayed 必须回给前端：延时行情不能当实时展示
+  return c.json({
+    provider: r.provider,
+    delayed: r.delayed,
+    quotes: Object.fromEntries(r.quotes),
+  });
 });
 
 app.onError((err, c) => {

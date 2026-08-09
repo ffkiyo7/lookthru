@@ -3,6 +3,7 @@ export interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   CACHE: KVNamespace;
-  ARCHIVE: R2Bucket;
+  /** R2 尚未在账号上启用，wrangler.toml 里的 binding 是注释掉的 → 运行时为 undefined */
+  ARCHIVE?: R2Bucket;
   ENVIRONMENT: string;
 }

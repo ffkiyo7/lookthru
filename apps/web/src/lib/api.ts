@@ -42,15 +42,22 @@ export function fetchHoldings(code: string): Promise<HoldingsResponse> {
   return get<HoldingsResponse>(`/api/funds/${code}/holdings`);
 }
 
+export interface Quote {
+  secid: string;
+  code: string;
+  /** ⚠️ 降级到腾讯/新浪源时为空串（GBK 乱码不可用），名称需从基金库取 */
+  name: string;
+  price: number;
+  chgPct: number;
+  prevClose: number | null;
+}
+
 export interface QuoteResponse {
-  [secid: string]: {
-    secid: string;
-    code: string;
-    name: string;
-    price: number;
-    chgPct: number;
-    prevClose: number | null;
-  };
+  /** 实际命中的行情源，null 表示全链失败 */
+  provider: string | null;
+  /** true = 延时行情，不能当实时展示，估值精度需相应降级 */
+  delayed: boolean;
+  quotes: Record<string, Quote>;
 }
 
 export function fetchQuotes(secids: string[]): Promise<QuoteResponse> {

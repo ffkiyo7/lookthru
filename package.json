@@ -16,9 +16,10 @@
     "typecheck": "tsc --noEmit -p packages/shared && tsc --noEmit -p apps/api && tsc --noEmit -p apps/web",
     "test": "vitest run",
     "test:live": "vitest run --config vitest.live.config.ts",
-    "deploy": "npm run build && wrangler deploy",
-    "db:migrate:local": "wrangler d1 migrations apply lookthru --local",
-    "db:migrate": "wrangler d1 migrations apply lookthru --remote"
+    "cf:config": "node scripts/gen-wrangler.mjs",
+    "deploy": "npm run build && npm run cf:config && wrangler deploy -c .wrangler.generated.toml",
+    "db:migrate:local": "npm run cf:config && wrangler d1 migrations apply lookthru --local -c .wrangler.generated.toml",
+    "db:migrate": "npm run cf:config && wrangler d1 migrations apply lookthru --remote -c .wrangler.generated.toml"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260804.1",

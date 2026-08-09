@@ -341,9 +341,25 @@ export async function fetchNavHistory(
 const QUOTE_FIELDS = 'f12,f13,f14,f2,f3,f18';
 const QUOTE_CHUNK = 100;
 
-export function quotesUrl(secids: string[]): string {
+/**
+ * push2 的可用主机。实测（LAX 出口）：主域 502，编号分片健康度约一半，
+ * push2delay 最稳但是**延时行情**，故排在最后。分片健康度会漂移，
+ * 因此按序试而非写死一个。
+ */
+export const EM_QUOTE_HOSTS = [
+  '3.push2.eastmoney.com',
+  '19.push2.eastmoney.com',
+  '33.push2.eastmoney.com',
+  '50.push2.eastmoney.com',
+  'push2.eastmoney.com',
+] as const;
+
+/** 延时行情主机：可用性最好，但数据滞后，只作最后兜底 */
+export const EM_QUOTE_HOST_DELAYED = 'push2delay.eastmoney.com';
+
+export function quotesUrl(secids: string[], host: string = EM_QUOTE_HOSTS[0]): string {
   return (
-    `https://push2.eastmoney.com/api/qt/ulist.np/get` +
+    `https://${host}/api/qt/ulist.np/get` +
     `?secids=${secids.join(',')}&fields=${QUOTE_FIELDS}&fltt=2&invt=2&_=${Date.now()}`
   );
 }
@@ -361,16 +377,21 @@ interface RawQuote {
 }
 
 /** 分批请求，单批 100 只。上游停牌/无效标的会被直接省略，不会报错 */
-export async function fetchQuotes(secids: string[]): Promise<Map<string, Quote>> {
+export async function fetchQuotes(
+  secids: string[],
+  host: string = EM_QUOTE_HOSTS[0],
+): Promise<Map<string, Quote>> {
   const out = new Map<string, Quote>();
   const uniq = [...new Set(secids)];
 
   for (let i = 0; i < uniq.length; i += QUOTE_CHUNK) {
     const chunk = uniq.slice(i, i + QUOTE_CHUNK);
-    const raw = await fetchJson<RawQuoteResp>(quotesUrl(chunk), {
-      source: 'em:quotes',
+    const raw = await fetchJson<RawQuoteResp>(quotesUrl(chunk, host), {
+      source: `em:quotes@${host}`,
       referer: REFERER_FUND,
       timeoutMs: 10_000,
+      // 主机不可用时不在这层重试，交给上层换主机 —— 重试同一台坏主机纯属浪费
+      retries: 0,
     });
     for (const q of raw.data?.diff ?? []) {
       const price = Number(q.f2);

@@ -9,10 +9,14 @@
 import type { NavPoint } from '@lookthru/shared';
 import * as em from './eastmoney';
 import * as sina from './sina';
+import { fetchQuotesResilient } from './quotes';
 import { fetchText } from './http';
 
 export * from './eastmoney';
 export * from './sina';
+export * from './tencent';
+export * from './yahoo';
+export * from './quotes';
 export * from './http';
 
 /** P0 探针要测的三个端点 —— 决定 Workers 出口是否可用 */
@@ -29,8 +33,9 @@ export const PROBE_TARGETS = [
         timeoutMs: 30_000,
         retries: 0,
       });
-      // 只看开头 32 字符，不要对 3.1MB 整串做 replace/slice —— 那会整份拷贝，
-      // 白白吃掉 CPU 预算（免费版每请求仅 10ms）
+      // 只看开头 32 字符，不对 3.1MB 整串做 replace/slice。
+      // Paid 版有 30s CPU，不是撑不住；而是探针的职责只有「出口通不通」，
+      // 真正的解析在 GitHub Actions 侧做（见 plan 3.3），这里多解析一遍纯属浪费。
       const head = text.charCodeAt(0) === 0xfeff ? text.substring(1, 32) : text.substring(0, 32);
       if (!head.startsWith('var r = [[')) throw new Error('内容不符合预期');
       return bytes;
@@ -53,12 +58,20 @@ export const PROBE_TARGETS = [
   },
   {
     source: 'quotes',
-    label: '批量实时行情',
-    endpoint: 'https://push2.eastmoney.com/api/qt/ulist.np/get',
+    label: '批量实时行情（降级链）',
+    endpoint: 'push2 分片 → 腾讯 → 新浪 → push2delay',
+    /**
+     * 探的是**整条链路**而非单一主机：单主机成功率对判定没意义，
+     * 「有没有一条路能拿到行情」才是。detail 记下命中的源与降级层数，
+     * 24h 后能看出东财是彻底不可用还是分片抖动。
+     */
     check: async () => {
-      const q = await em.fetchQuotes(['1.600519', '1.510300']);
-      if (q.size === 0) throw new Error('未返回任何行情');
-      return q.size;
+      const r = await fetchQuotesResilient(['1.600519', '1.510300']);
+      if (!r.provider) {
+        throw new Error(`全链失败: ${r.attempts.map((a) => `${a.provider}=${a.error}`).join(' | ')}`);
+      }
+      const fellBack = r.attempts.length - 1;
+      return `${r.provider} n=${r.quotes.size} 降级${fellBack}层${r.delayed ? ' 延时' : ''}`;
     },
   },
 ] as const;

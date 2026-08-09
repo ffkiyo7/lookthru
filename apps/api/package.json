@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --config ../../wrangler.toml"
+    "dev": "node ../../scripts/gen-wrangler.mjs && wrangler dev --config ../../.wrangler.generated.toml"
   },
   "dependencies": {
     "@lookthru/shared": "*",

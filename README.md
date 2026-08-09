@@ -5,8 +5,9 @@
 > ⚠️ 个人自用项目，非公开注册（邀请码制）。所有数据来自公开接口，**不构成任何投资建议**。
 
 **当前进度**
-- P0（出口风险验证）—— 代码就绪，待部署采集 24h 数据。判定面板在 `/probe`
-- 前端 5 个页面已按 Claude Design 稿实现，数据走 fixture（`apps/web/src/lib/mock.ts`），搜索已接真实东财接口
+- 已部署 → https://lookthru.ffkiyo7.workers.dev
+- P0（出口风险验证）—— 正在采集 24h 数据，Cron 每 5 分钟一次。判定面板在 `/probe`
+- 前端 5 个页面已按 Claude Design 稿实现，数据走 fixture（`apps/web/src/lib/mock.ts`），搜索与行情已接真实接口
 
 | 路由 | 页面 |
 |---|---|
@@ -30,37 +31,29 @@
 
 ---
 
-## 部署（需要你执行，我没有你的 Cloudflare 凭据）
+## 部署
+
+**资源 id 不入库。** `wrangler.toml` 里是 `PLACEHOLDER_<KEY>` 占位符，真实值放在 gitignore 的 `.wrangler-ids`，由 `scripts/gen-wrangler.mjs` 替换后生成 `.wrangler.generated.toml` 供 wrangler 使用。好处是 `wrangler.toml` 仍是唯一配置真相源，不会出现 example 文件与实际配置各改各的漂移。
 
 ```bash
-# 1. 登录（会打开浏览器）
 npx wrangler login
 
-# 2. 创建三个资源
-npx wrangler d1 create lookthru
-npx wrangler kv namespace create CACHE
-npx wrangler r2 bucket create lookthru-archive
+# 创建资源
+npx wrangler d1 create lookthru          # → database_id
+npx wrangler kv namespace create CACHE   # → id
+
+cp .wrangler-ids.example .wrangler-ids   # 把上面两个 id 填进去
+
+npm run db:migrate                       # 建表（远端）
+npm run deploy                           # 构建前端 + 发布 Worker
+curl -X POST https://<域名>/api/probe/run # 立刻探一次，不必等 Cron
 ```
 
-前两条会各输出一个 id。把它们填进 `wrangler.toml`，替换这两个占位符：
+Cron 每 5 分钟自动探测，满 24h 后 `/probe` 面板给出结论。
 
-```toml
-database_id = "PLACEHOLDER_RUN_wrangler_d1_create_lookthru"   # ← d1 create 输出的 database_id
-id = "PLACEHOLDER_RUN_wrangler_kv_namespace_create_CACHE" # ← kv create 输出的 id
-```
+> **需要 Workers Paid（$5/月）**，已订阅。免费版每请求仅 10ms CPU，且订阅前 `[limits] cpu_ms` 不可用。
 
-```bash
-# 3. 建表 + 部署
-npx wrangler d1 migrations apply lookthru --remote
-npm run deploy
-
-# 4. 立刻触发一次探测（不必等 Cron）
-curl -X POST https://<你的域名>/api/probe/run
-```
-
-然后打开首页看判定面板。Cron 每 5 分钟自动探测一次，满 24h 后面板给出结论。
-
-> ⚠️ **需要 Workers Paid（$5/月）**。免费版每请求只有 10ms CPU，解析 3.1MB 的基金列表必然超时。
+> **R2 尚未启用**：`wrangler r2 bucket create` 报 `code: 10042`，需先在 Dashboard 点一次「Enable R2」。P0 探针只写 D1，不受影响；`wrangler.toml` 里的 `[[r2_buckets]]` 暂时注释掉，启用后取消注释并去掉 `env.ts` 里 `ARCHIVE` 的 `?`。
 
 ---
 
@@ -96,9 +89,40 @@ npm run test:live      # 打真实上游端点的契约测试
 | 单基金全量档案 | `fund.eastmoney.com/pingzhongdata/{code}.js` | 净值全历史 + 每日股票仓位 + 重仓股 secid + 费率 + 经理 |
 | 持仓明细 + 权重 | `fundmobapi.eastmoney.com/.../FundMNInverstPosition` | JSON，`JZBL` 是占净值比，白送行业分类 |
 | 历史净值 | `api.fund.eastmoney.com/f10/lsjz` | 需 Referer |
-| 批量实时行情 | `push2.eastmoney.com/api/qt/ulist.np/get` | 股票/ETF/指数通用 |
+| 批量实时行情 | `{3,19,33,50}.push2.eastmoney.com` → 腾讯 → 新浪 → `push2delay` | 降级链，见下 |
 | 搜索建议 | `fundsuggest.eastmoney.com` | 中文/拼音/代码 |
 | 净值批量兜底 | `hq.sinajs.cn/list=f_xxxxxx` | GBK，按 latin1 读，只取数值字段 |
+
+### ⚠️ 行情源必须走降级链（P0 实测结论）
+
+从 Cloudflare LAX 出口实测，**东财 push2 主域不可用**：
+
+| 源 | 结果 | 延迟 |
+|---|---|---|
+| `push2.eastmoney.com` | ❌ 502（稳定复现） | — |
+| `2/5/99.push2` | ❌ 520 | — |
+| `3/19/33/50.push2` | ✅ 200 | 3.6–5.9s |
+| `push2delay` | ✅ 200 | 2.0s，**延时行情** |
+| `qt.gtimg.cn`（腾讯） | ✅ 200 | 2.8s，实时 |
+| `hq.sinajs.cn`（新浪） | ✅ 200 | 2.8s，实时 |
+| `query1.finance.yahoo.com` | ✅ 200 | **0.1s**，但无批量接口 |
+
+同一 URL 本机直连 200/101ms，且四种请求头组合（裸 / UA / UA+Referer / 最简参数）在每台主机上表现完全一致 —— **不是 WAF 拒请求形态，是出口 IP + CDN 回源问题，调 UA 没用**。
+
+`fundcode_search.js` 与 `pingzhongdata` 均正常，所以不是东财整体封 CF。
+
+实现见 `apps/api/src/sources/quotes.ts`，降级顺序：
+
+```
+东财分片(3/19/33/50) → 腾讯 → 新浪 → 雅虎 → 东财延时
+```
+
+- 分片健康度会漂移，因此**按序试而非写死主机**
+- 雅虎排在境内三家之后：它是唯一的境外源，相关性最低的退路。但**没有可用的批量接口**（v7 需 crumb+cookie 返 401，v6 已 404），只能一次一只，因此标的数超过 `YAHOO_MAX_SYMBOLS`(25) 直接跳过，不做扇出
+- 延时源排最后并置 `delayed: true` 向上传递 —— **滞后行情不能当实时展示**，估值精度须相应降级
+- 腾讯/新浪的名称是 GBK 乱码，统一置空，名称从自有基金库取；雅虎的名称是干净 UTF-8
+
+> A 股在雅虎的实际延时未测（周末无法验证），交易日需实测后再决定是否给它也置 `delayed`。
 
 ### ❌ 官方盘中估值已下线
 

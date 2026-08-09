@@ -1,0 +1,9 @@
+# 复制为 .wrangler-ids（已 gitignore），填入创建资源时 wrangler 输出的 id。
+#
+#   npx wrangler d1 create lookthru            → database_id
+#   npx wrangler kv namespace create CACHE     → id
+#
+# scripts/gen-wrangler.mjs 用这些值替换 wrangler.toml 里的 PLACEHOLDER_<KEY>。
+
+D1_DATABASE_ID=
+KV_CACHE_ID=

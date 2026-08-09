@@ -7,3 +7,7 @@ dist/
 tsconfig.tsbuildinfo
 *.tsbuildinfo
 coverage/
+
+# CF 资源 id：真实值不入库（见 .wrangler-ids.example）
+.wrangler-ids
+.wrangler.generated.toml

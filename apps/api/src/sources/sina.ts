@@ -10,6 +10,7 @@
  * （基金名称从我们自己的基金库取）。
  */
 
+import type { Quote } from '@lookthru/shared';
 import { fetchText } from './http';
 
 const REFERER_SINA = 'https://finance.sina.com.cn/';
@@ -41,6 +42,68 @@ export async function fetchNavBatch(codes: string[]): Promise<Map<string, SinaNa
       timeoutMs: 12_000,
     });
     for (const [code, nav] of parseSinaNav(text)) out.set(code, nav);
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 股票 / 场内基金实时行情（东财 push2 不可用时的备源之一）
+// ─────────────────────────────────────────────────────────────
+
+/** secid `1.600519` → `sh600519`；`0.159915` → `sz159915` */
+export function secidToSina(secid: string): string | null {
+  const [market, code] = secid.split('.');
+  if (!code) return null;
+  if (market === '1') return `sh${code}`;
+  if (market === '0') return `sz${code}`;
+  return null;
+}
+
+export async function fetchQuotesSina(secids: string[]): Promise<Map<string, Quote>> {
+  const out = new Map<string, Quote>();
+  const pairs = [...new Set(secids)]
+    .map((s) => [s, secidToSina(s)] as const)
+    .filter((p): p is readonly [string, string] => p[1] !== null);
+
+  for (let i = 0; i < pairs.length; i += CHUNK) {
+    const chunk = pairs.slice(i, i + CHUNK);
+    const { text } = await fetchText(`https://hq.sinajs.cn/list=${chunk.map((p) => p[1]).join(',')}`, {
+      source: 'sina:quotes',
+      referer: REFERER_SINA,
+      decodeAs: 'latin1',
+      timeoutMs: 10_000,
+      retries: 1,
+    });
+    const parsed = parseSinaQuotes(text);
+    for (const [secid, scode] of chunk) {
+      const q = parsed.get(scode);
+      if (q) out.set(secid, { ...q, secid });
+    }
+  }
+  return out;
+}
+
+/** `var hq_str_sh600519="名称,今开,昨收,现价,最高,最低,..."` */
+export function parseSinaQuotes(text: string): Map<string, Omit<Quote, 'secid'>> {
+  const out = new Map<string, Omit<Quote, 'secid'>>();
+  const re = /var\s+hq_str_([a-z]{2}\d{6})="([^"]*)"/g;
+  let m: RegExpExecArray | null;
+
+  while ((m = re.exec(text)) !== null) {
+    const scode = m[1]!;
+    const parts = m[2]!.split(',');
+    const price = Number(parts[3]);
+    const prevClose = Number(parts[2]);
+    if (!Number.isFinite(price) || price <= 0) continue;
+
+    const hasPrev = Number.isFinite(prevClose) && prevClose > 0;
+    out.set(scode, {
+      code: scode.slice(2),
+      name: '', // GBK 乱码，不可用
+      price,
+      chgPct: hasPrev ? Number((((price - prevClose) / prevClose) * 100).toFixed(4)) : 0,
+      prevClose: hasPrev ? prevClose : null,
+    });
   }
   return out;
 }
