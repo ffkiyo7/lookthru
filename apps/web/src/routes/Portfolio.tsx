@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import type { Position } from '@qd2/shared';
+import type { Position } from '@lookthru/shared';
 import { Change, Money } from '../components/Money';
 import { PrecisionBadge, PrecisionLegend } from '../components/PrecisionBadge';
 import { Card, IconCircle, WarnBar } from '../components/ui';

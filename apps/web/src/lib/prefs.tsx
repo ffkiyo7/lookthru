@@ -16,7 +16,7 @@ export interface Prefs {
 }
 
 const DEFAULTS: Prefs = { updown: 'red-up', privacy: false, freq: '1m' };
-const STORAGE_KEY = 'qd2.prefs';
+const STORAGE_KEY = 'lookthru.prefs';
 
 interface PrefsContextValue extends Prefs {
   set: <K extends keyof Prefs>(key: K, value: Prefs[K]) => void;

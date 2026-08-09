@@ -1,7 +1,7 @@
-import type { Position, TopHolding, Valuation } from '@qd2/shared';
+import type { Position, TopHolding, Valuation } from '@lookthru/shared';
 
 /**
- * 演示数据。全部按 @qd2/shared 的真实类型构造，接后端时只换数据来源、不改组件。
+ * 演示数据。全部按 @lookthru/shared 的真实类型构造，接后端时只换数据来源、不改组件。
  *
  * 数值取自设计稿；基金详情部分是实测的真实数据（161725 的 2026Q2 季报与费率）。
  * 待 P1 持仓 API 就绪后整个文件删除。

@@ -1,6 +1,8 @@
-# 基金持仓追踪 PWA
+# lookthru
 
-移动端优先的公募基金持仓追踪工具。架构方案见 `~/.claude/plans/idea-pwa-shimmying-teapot.md`。
+移动端优先的公募基金持仓追踪 PWA。名字取自 **look-through**（持仓穿透）—— 聚合所有持仓基金的重仓股，看到股票级的真实敞口和重复押注，这是本项目相对现有工具的主要差异点。
+
+> ⚠️ 个人自用项目，非公开注册（邀请码制）。所有数据来自公开接口，**不构成任何投资建议**。
 
 **当前进度**
 - P0（出口风险验证）—— 代码就绪，待部署采集 24h 数据。判定面板在 `/probe`
@@ -35,21 +37,21 @@
 npx wrangler login
 
 # 2. 创建三个资源
-npx wrangler d1 create qd2
+npx wrangler d1 create lookthru
 npx wrangler kv namespace create CACHE
-npx wrangler r2 bucket create qd2-archive
+npx wrangler r2 bucket create lookthru-archive
 ```
 
 前两条会各输出一个 id。把它们填进 `wrangler.toml`，替换这两个占位符：
 
 ```toml
-database_id = "PLACEHOLDER_RUN_wrangler_d1_create_qd2"   # ← d1 create 输出的 database_id
+database_id = "PLACEHOLDER_RUN_wrangler_d1_create_lookthru"   # ← d1 create 输出的 database_id
 id = "PLACEHOLDER_RUN_wrangler_kv_namespace_create_CACHE" # ← kv create 输出的 id
 ```
 
 ```bash
 # 3. 建表 + 部署
-npx wrangler d1 migrations apply qd2 --remote
+npx wrangler d1 migrations apply lookthru --remote
 npm run deploy
 
 # 4. 立刻触发一次探测（不必等 Cron）
@@ -66,7 +68,7 @@ curl -X POST https://<你的域名>/api/probe/run
 
 ```bash
 npm install
-npx wrangler d1 migrations apply qd2 --local
+npx wrangler d1 migrations apply lookthru --local
 npm run build          # 前端必须先构建，Worker 才有 assets 可托管
 npx wrangler dev       # → http://localhost:8787
 

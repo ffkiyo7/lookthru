@@ -1,4 +1,4 @@
-import type { ValuationPrecision } from '@qd2/shared';
+import type { ValuationPrecision } from '@lookthru/shared';
 
 /**
  * 估值精度徽章。官方盘中估值已下线，我们的估值全部自建，

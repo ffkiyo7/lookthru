@@ -8,7 +8,7 @@
  * FundMNFInfo 的 GSZ/GSZZL 字段恒为 null。估值一律自建，见 valuation/engine.ts。
  */
 
-import type { FundBrief, NavPoint, Quote, TopHolding } from '@qd2/shared';
+import type { FundBrief, NavPoint, Quote, TopHolding } from '@lookthru/shared';
 import { extractJsVar, fetchJson, fetchJsonp, fetchText, UpstreamError } from './http';
 
 const REFERER_FUND = 'https://fund.eastmoney.com/';
@@ -227,7 +227,7 @@ export interface HoldingsResult {
 export function holdingsUrl(code: string): string {
   return (
     `https://fundmobapi.eastmoney.com/FundMNewApi/FundMNInverstPosition` +
-    `?FCODE=${code}&deviceid=qd2&plat=Iphone&product=EFund&version=6.2.8`
+    `?FCODE=${code}&deviceid=lookthru&plat=Iphone&product=EFund&version=6.2.8`
   );
 }
 

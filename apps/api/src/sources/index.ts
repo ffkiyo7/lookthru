@@ -6,7 +6,7 @@
  *   2. 上游故障不能让 UI 空白 → 调用方永远拿 last-known-good + 陈旧度
  */
 
-import type { NavPoint } from '@qd2/shared';
+import type { NavPoint } from '@lookthru/shared';
 import * as em from './eastmoney';
 import * as sina from './sina';
 import { fetchText } from './http';

@@ -1,5 +1,5 @@
 {
-  "name": "qd2-tracker",
+  "name": "lookthru",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -10,15 +10,15 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "npm run dev -w @qd2/api",
-    "dev:web": "npm run dev -w @qd2/web",
-    "build": "npm run build -w @qd2/web",
+    "dev": "npm run dev -w @lookthru/api",
+    "dev:web": "npm run dev -w @lookthru/web",
+    "build": "npm run build -w @lookthru/web",
     "typecheck": "tsc --noEmit -p packages/shared && tsc --noEmit -p apps/api && tsc --noEmit -p apps/web",
     "test": "vitest run",
     "test:live": "vitest run --config vitest.live.config.ts",
     "deploy": "npm run build && wrangler deploy",
-    "db:migrate:local": "wrangler d1 migrations apply qd2 --local",
-    "db:migrate": "wrangler d1 migrations apply qd2 --remote"
+    "db:migrate:local": "wrangler d1 migrations apply lookthru --local",
+    "db:migrate": "wrangler d1 migrations apply lookthru --remote"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260804.1",

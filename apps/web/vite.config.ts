@@ -33,7 +33,7 @@ export default defineConfig({
             urlPattern: /^\/api\/(portfolio|funds)\//,
             handler: 'NetworkFirst',
             options: {
-              cacheName: 'qd2-api',
+              cacheName: 'lookthru-api',
               networkTimeoutSeconds: 5,
               expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 7 },
             },
