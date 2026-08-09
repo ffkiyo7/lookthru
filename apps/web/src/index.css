@@ -119,6 +119,27 @@
   }
 }
 
+/*
+ * iOS 安全区。
+ *
+ * index.html 里是 viewport-fit=cover + apple-mobile-web-app-status-bar-style:
+ * black-translucent —— 页面会铺满到刘海/灵动岛和 home indicator 底下（这是
+ * 想要的效果，边到边才像原生 App）。代价是**每个内容容器必须自己让开安全区**，
+ * 否则标题会被刘海盖住，而且看起来像是页面滚过头了。
+ *
+ * 这几个工具类加在 AppShell / SubPage 上，一次覆盖所有页面 —— 不要在单个
+ * 页面里各写各的，那样新增页面必然漏。
+ */
+@utility safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* 横屏 / 刘海转到侧边时左右也有安全区；竖屏下 inset 为 0，等价于 px-4 */
+@utility safe-x {
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
+}
+
 @utility safe-bottom {
   padding-bottom: calc(env(safe-area-inset-bottom) + var(--tw-safe-extra, 0px));
 }

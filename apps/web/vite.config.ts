@@ -15,8 +15,9 @@ export default defineConfig({
         name: '基金持仓追踪',
         short_name: '持仓',
         description: '中国大陆公募基金持仓追踪与实时估值',
-        theme_color: '#0f172a',
-        background_color: '#0f172a',
+        // 与设计令牌一致：page / root。不一致会在启动图与状态栏区域闪色
+        theme_color: '#0a0b0e',
+        background_color: '#050608',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/',

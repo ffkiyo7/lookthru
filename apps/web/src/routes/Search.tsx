@@ -25,7 +25,9 @@ export function Search() {
   const isPinyin = /^[a-z]+$/i.test(debounced);
 
   return (
-    <div className="flex min-h-dvh flex-col">
+    // 不要在这里再写 min-h-dvh —— AppShell 已经是整屏高，嵌套会多出一屏可滚区域，
+    // 表现为「怎么拉都还能再拉一点」
+    <div className="flex flex-col">
       <div className="flex shrink-0 items-center gap-3 pt-4 pb-3">
         <div
           className={`flex flex-1 items-center gap-2.5 rounded-xl border bg-raised px-3.5 py-[11px] transition-colors ${
@@ -61,7 +63,14 @@ export function Search() {
               className="flex size-[17px] shrink-0 items-center justify-center rounded-full bg-[#3a3d45]"
               aria-label="清空"
             >
-              <svg width="9" height="9" viewBox="0 0 24 24" stroke="#c3c7ce" strokeWidth="3" strokeLinecap="round">
+              <svg
+                width="9"
+                height="9"
+                viewBox="0 0 24 24"
+                stroke="#c3c7ce"
+                strokeWidth="3"
+                strokeLinecap="round"
+              >
                 <line x1="5" y1="5" x2="19" y2="19" />
                 <line x1="19" y1="5" x2="5" y2="19" />
               </svg>
@@ -98,7 +107,12 @@ export function Search() {
                 找到 {data.length} 只相关基金
               </div>
               {data.map((hit, i) => (
-                <ResultRow key={hit.code} hit={hit} keyword={debounced} last={i === data.length - 1} />
+                <ResultRow
+                  key={hit.code}
+                  hit={hit}
+                  keyword={debounced}
+                  last={i === data.length - 1}
+                />
               ))}
             </>
           )}
@@ -186,7 +200,14 @@ function ResultRow({ hit, keyword, last }: { hit: SearchHit; keyword: string; la
         className="flex size-[30px] shrink-0 items-center justify-center rounded-[9px] border border-accent/40 bg-accent/12 text-accent-soft"
         aria-label="加入自选"
       >
-        <svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth="2.4"
+          strokeLinecap="round"
+        >
           <line x1="12" y1="5" x2="12" y2="19" />
           <line x1="5" y1="12" x2="19" y2="12" />
         </svg>

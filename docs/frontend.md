@@ -104,7 +104,28 @@
 
 `/api/quotes` 返回 `delayed: true` 时，UI 必须标明。当前降级链的最后一层是延时源，会真的走到。
 
-### 6. 上游故障时显示 last-known-good + 陈旧度，绝不空白
+### 6. 安全区必须在容器层处理，不要在页面里各写各的
+
+`index.html` 里是 `viewport-fit=cover` + `apple-mobile-web-app-status-bar-style: black-translucent`，页面会铺满到刘海/灵动岛和 home indicator 底下。这是想要的效果（边到边才像原生 App），代价是**内容必须自己让开安全区**。
+
+三个工具类在 `index.css`：
+
+| 类 | 作用 |
+|---|---|
+| `safe-top` | `padding-top: env(safe-area-inset-top)` |
+| `safe-x` | 左右 `max(1rem, env(safe-area-inset-left/right))`，竖屏下等价 `px-4` |
+| `safe-bottom` | 底部，可用 `--tw-safe-extra` 追加额外间距 |
+
+**加在 `AppShell` / `SubPage` 上，一次覆盖所有页面。** 不要在单个页面里处理 —— 新增页面必然漏，而且这个 bug 在桌面浏览器上完全看不出来（`env()` 恒为 0）。
+
+两个坑：
+
+1. **`safe-top` 独占 `padding-top`**，同一个元素上再写 `pt-*` 会冲突。页面自己的上边距放到内层元素（`Probe.tsx` 就是这么套的）
+2. **不要在页面根节点重复写 `min-h-dvh`** —— 容器已经是整屏高，嵌套会让页面比视口高出正好一个安全区的量，表现为「怎么拉都还能再拉一点，松手又弹回去」
+
+桌面端验证方法：注入 `.safe-top { padding-top: 59px !important }` 模拟 iPhone 刘海，检查 `scrollHeight - innerHeight` 是否仍为 0。
+
+### 7. 上游故障时显示 last-known-good + 陈旧度，绝不空白
 
 宁可显示「3 分钟前的数据」，也不要显示空白或骨架屏转圈。
 

@@ -40,7 +40,14 @@ const TABS = [
     to: '/xray',
     label: '穿透',
     icon: (
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <svg
+        width="22"
+        height="22"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+      >
         <circle cx="12" cy="12" r="8" />
         <circle cx="12" cy="12" r="3.2" />
       </svg>
@@ -92,10 +99,13 @@ export function TabBar() {
   );
 }
 
-/** 带 tab bar 的页面容器 */
+/**
+ * 带 tab bar 的页面容器。
+ * safe-top / safe-x 在这里加，所有子页面自动获得安全区，不必各自处理。
+ */
 export function AppShell() {
   return (
-    <div className="mx-auto min-h-dvh max-w-[430px] px-4 pb-[108px]">
+    <div className="safe-x safe-top mx-auto min-h-dvh max-w-[430px] pb-[108px]">
       <Outlet />
       <TabBar />
     </div>
@@ -105,7 +115,11 @@ export function AppShell() {
 /** 无 tab bar 的次级页容器（基金详情等） */
 export function SubPage({ children, bottomBar }: { children: ReactNode; bottomBar?: ReactNode }) {
   return (
-    <div className={`mx-auto min-h-dvh max-w-[430px] px-4 ${bottomBar ? 'pb-[110px]' : 'pb-10'}`}>
+    <div
+      className={`safe-x safe-top mx-auto min-h-dvh max-w-[430px] ${
+        bottomBar ? 'pb-[110px]' : 'pb-10'
+      }`}
+    >
       {children}
       {bottomBar}
     </div>

@@ -6,9 +6,15 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"
     />
-    <meta name="theme-color" content="#0f172a" />
+    <!-- 与 --color-page 一致。写错会让状态栏区域和启动图闪一下别的颜色 -->
+    <meta name="theme-color" content="#0a0b0e" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- apple- 前缀这个已废弃，但 iOS 仍只认它，两个都要留 -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- black-translucent 让页面铺到状态栏下（边到边）。
+         代价是内容必须自己让开 env(safe-area-inset-*)，见 index.css 的 safe-* 工具类 -->
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="持仓" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="apple-touch-icon" href="/icon.svg" />
     <title>基金持仓追踪</title>
