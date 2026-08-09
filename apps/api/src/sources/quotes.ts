@@ -23,7 +23,6 @@ import type { Quote } from '@lookthru/shared';
 import { EM_QUOTE_HOSTS, EM_QUOTE_HOST_DELAYED, fetchQuotes } from './eastmoney';
 import { fetchQuotesTencent } from './tencent';
 import { fetchQuotesSina } from './sina';
-import { fetchQuotesYahoo, YAHOO_MAX_SYMBOLS } from './yahoo';
 
 export interface QuoteAttempt {
   provider: string;
@@ -58,9 +57,9 @@ const PROVIDERS: Provider[] = [
   })),
   { name: 'tencent', delayed: false, fetch: fetchQuotesTencent },
   { name: 'sina', delayed: false, fetch: fetchQuotesSina },
-  // 雅虎是唯一的境外源 —— 上面三家同属境内，从 CF 出口是同一类风险，
-  // 相关性最低的退路值得留着。但它无批量接口，只在标的数少时可用。
-  { name: 'yahoo', delayed: false, fetch: fetchQuotesYahoo, maxSymbols: YAHOO_MAX_SYMBOLS },
+  // 雅虎已评估但不入链，原因见 yahoo.ts —— 无批量接口。
+  // 要启用就把下面这行取消注释（maxSymbols 会挡住超量扇出）：
+  // { name: 'yahoo', delayed: false, fetch: fetchQuotesYahoo, maxSymbols: YAHOO_MAX_SYMBOLS },
   {
     name: `em:${EM_QUOTE_HOST_DELAYED}`,
     delayed: true,

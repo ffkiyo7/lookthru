@@ -51,9 +51,15 @@ curl -X POST https://<域名>/api/probe/run # 立刻探一次，不必等 Cron
 
 Cron 每 5 分钟自动探测，满 24h 后 `/probe` 面板给出结论。
 
+R2 需要先在 Dashboard 点一次「Enable R2」，否则 `wrangler r2 bucket create` 报 `code: 10042`：
+
+```bash
+npx wrangler r2 bucket create lookthru-archive
+```
+
 > **需要 Workers Paid（$5/月）**，已订阅。免费版每请求仅 10ms CPU，且订阅前 `[limits] cpu_ms` 不可用。
 
-> **R2 尚未启用**：`wrangler r2 bucket create` 报 `code: 10042`，需先在 Dashboard 点一次「Enable R2」。P0 探针只写 D1，不受影响；`wrangler.toml` 里的 `[[r2_buckets]]` 暂时注释掉，启用后取消注释并去掉 `env.ts` 里 `ARCHIVE` 的 `?`。
+D1 / KV / R2 三个 binding 均已验证可读写（R2 走 put → get → delete 往返）。
 
 ---
 
@@ -114,15 +120,14 @@ npm run test:live      # 打真实上游端点的契约测试
 实现见 `apps/api/src/sources/quotes.ts`，降级顺序：
 
 ```
-东财分片(3/19/33/50) → 腾讯 → 新浪 → 雅虎 → 东财延时
+东财分片(3/19/33/50) → 腾讯 → 新浪 → 东财延时
 ```
 
-- 分片健康度会漂移，因此**按序试而非写死主机**
-- 雅虎排在境内三家之后：它是唯一的境外源，相关性最低的退路。但**没有可用的批量接口**（v7 需 crumb+cookie 返 401，v6 已 404），只能一次一只，因此标的数超过 `YAHOO_MAX_SYMBOLS`(25) 直接跳过，不做扇出
+- 分片健康度会漂移，因此**按序试而非写死主机**。实测已出现过 `3.push2` 失败自动降到 `19.push2` 的情况
 - 延时源排最后并置 `delayed: true` 向上传递 —— **滞后行情不能当实时展示**，估值精度须相应降级
-- 腾讯/新浪的名称是 GBK 乱码，统一置空，名称从自有基金库取；雅虎的名称是干净 UTF-8
+- 腾讯/新浪的名称是 GBK 乱码，统一置空，名称从自有基金库取
 
-> A 股在雅虎的实际延时未测（周末无法验证），交易日需实测后再决定是否给它也置 `delayed`。
+**雅虎已评估但不采用**（`sources/yahoo.ts` 保留代码存档，未接入链路）。它从 CF 出口只要 96–142ms、数据与东财逐位一致、名称是干净 UTF-8，但**没有可用的批量接口**：v7 需 crumb+cookie 返 401，v6 已 404，只剩 v8 chart 一次一只。估值引擎每分钟刷上百只重仓股，逐只请求违反「中央化抓取」铁律且必然被限流；而境内已有腾讯、新浪两家实时批量源，它那点「境外独立性」不足以抵消这个限制。要启用把 `quotes.ts` 里那行取消注释即可。
 
 ### ❌ 官方盘中估值已下线
 

@@ -44,13 +44,11 @@ migrations_dir = "apps/api/migrations"
 binding = "CACHE"
 id = "PLACEHOLDER_KV_CACHE_ID"
 
-# ── R2 尚未启用 ────────────────────────────────────────────────
-# 账号需先在 Dashboard 点一次「Enable R2」（wrangler 报 code: 10042）。
-# P0 探针只写 D1，用不到归档桶；启用后取消注释，并把 env.ts 里
-# ARCHIVE 的 `?` 去掉。
-# [[r2_buckets]]
-# binding = "ARCHIVE"
-# bucket_name = "lookthru-archive"
+# 净值全历史 / 全量基金列表 / 持仓明细归档。放 R2 而非 D1：
+# 1.2 万基金 × 3000 天 = 3600 万行，D1 装不下也不该装（见 plan 3.4）
+[[r2_buckets]]
+binding = "ARCHIVE"
+bucket_name = "lookthru-archive"
 
 [vars]
 ENVIRONMENT = "development"
