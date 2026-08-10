@@ -117,11 +117,46 @@ export function summarize(positions: Position[]) {
 // ─────────────────────────────────────────────────────────────
 
 export const MOCK_HOLDINGS: (TopHolding & { chgPct: number; delta: string })[] = [
-  { stockCode: '600519', stockName: '贵州茅台', weight: 17.28, secid: '1.600519', chgPct: 0.82, delta: '减 1.05' },
-  { stockCode: '600809', stockName: '山西汾酒', weight: 15.19, secid: '1.600809', chgPct: 1.34, delta: '增 0.87' },
-  { stockCode: '000568', stockName: '泸州老窖', weight: 15.03, secid: '0.000568', chgPct: -0.45, delta: '增 0.33' },
-  { stockCode: '000858', stockName: '五粮液', weight: 14.22, secid: '0.000858', chgPct: 0.28, delta: '减 1.92' },
-  { stockCode: '002304', stockName: '洋河股份', weight: 7.88, secid: '0.002304', chgPct: -0.91, delta: '增 0.14' },
+  {
+    stockCode: '600519',
+    stockName: '贵州茅台',
+    weight: 17.28,
+    secid: '1.600519',
+    chgPct: 0.82,
+    delta: '减 1.05',
+  },
+  {
+    stockCode: '600809',
+    stockName: '山西汾酒',
+    weight: 15.19,
+    secid: '1.600809',
+    chgPct: 1.34,
+    delta: '增 0.87',
+  },
+  {
+    stockCode: '000568',
+    stockName: '泸州老窖',
+    weight: 15.03,
+    secid: '0.000568',
+    chgPct: -0.45,
+    delta: '增 0.33',
+  },
+  {
+    stockCode: '000858',
+    stockName: '五粮液',
+    weight: 14.22,
+    secid: '0.000858',
+    chgPct: 0.28,
+    delta: '减 1.92',
+  },
+  {
+    stockCode: '002304',
+    stockName: '洋河股份',
+    weight: 7.88,
+    secid: '0.002304',
+    chgPct: -0.91,
+    delta: '增 0.14',
+  },
 ];
 
 export const MOCK_FUND_DETAIL = {
@@ -235,6 +270,14 @@ export const MOCK_WATCHLIST = [
 ];
 
 export const HOT_KEYWORDS = [
-  '白酒', '医药', '新能源', '半导体', '沪深300',
-  '中概互联', '黄金', '红利低波', '纳指ETF', '军工',
+  '白酒',
+  '医药',
+  '新能源',
+  '半导体',
+  '沪深300',
+  '中概互联',
+  '黄金',
+  '红利低波',
+  '纳指ETF',
+  '军工',
 ];
