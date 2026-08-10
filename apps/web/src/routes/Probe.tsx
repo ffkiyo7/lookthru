@@ -20,7 +20,10 @@ type SourceStat = {
 
 type Stats = {
   windowHours: number;
+  /** 滚动窗口内最早一行，只描述统计区间 */
   since: string | null;
+  /** 全时段最早一次探测 —— 采样时长看这个 */
+  firstProbedAt: string | null;
   sources: SourceStat[];
   colos: { colo: string; total: number; ok: number; rate: number }[];
 };
@@ -51,7 +54,11 @@ export function Probe() {
     return () => clearInterval(t);
   }, []);
 
-  const hours = stats?.since ? (Date.now() - new Date(stats.since).getTime()) / 3_600_000 : 0;
+  // 必须用 firstProbedAt 而不是 since：since 是滚动窗口内的最早一行，
+  // 跑满 24h 后它永远停在 now-24h，hours 会卡在 23.9x 永远达不到门槛
+  const hours = stats?.firstProbedAt
+    ? (Date.now() - new Date(stats.firstProbedAt).getTime()) / 3_600_000
+    : 0;
   const allPass = !!stats && stats.sources.length > 0 && stats.sources.every((s) => s.rate >= PASS);
   const enough = hours >= 24;
 
@@ -89,12 +96,21 @@ export function Probe() {
               </>
             ) : allPass ? (
               <>
-                <strong>✓ P0 通过</strong> · 架构成立，可直接在 Workers 侧做在线抓取，进入 P1。
+                <strong>✓ P0 通过</strong> · 已运行 {hours.toFixed(1)}h，架构成立，可直接在 Workers
+                侧做在线抓取。
+                <div className="mt-1.5 text-[12.5px] text-ink-muted">
+                  注意：成功率统计的是最近 {stats.windowHours}h 滚动窗口，不是全时段。下方 colo
+                  分布同理 —— 窗口里只出现过的节点不代表其他节点也验证过，探针应继续运行。
+                </div>
               </>
             ) : (
               <>
                 <strong>✗ P0 未通过</strong> · 启用退路：将上游抓取全部迁至 GitHub Actions，Workers
                 只读自己的 R2/KV。架构不用推倒。
+                <div className="mt-1.5 text-[12.5px] text-ink-muted">
+                  退路本身也未经验证 —— Actions 出口实测有间歇性传输层失败，见
+                  docs/data-sources.md。
+                </div>
               </>
             )}
           </div>

@@ -101,6 +101,13 @@ export async function probeStats(env: Env, windowHours = 24) {
 
   const rows = results ?? [];
 
+  // 全时段最早一次探测。判定「采样是否满 24h」必须用它，不能用下面的 since ——
+  // since 是**滚动窗口内**的最早一行，运行超过 24h 后会永远停在 now-24h 附近，
+  // 前端的 hours >= 24 就永远不成立，面板卡在「采样中」。
+  const first = await env.DB.prepare(
+    `SELECT MIN(probed_at) AS first_probed_at FROM probe_results`,
+  ).first<{ first_probed_at: string | null }>();
+
   const sources = PROBE_TARGETS.map((t) => {
     const mine = rows.filter((r) => r.source === t.source);
     const ok = mine.filter((r) => r.ok === 1);
@@ -135,7 +142,10 @@ export async function probeStats(env: Env, windowHours = 24) {
 
   return {
     windowHours,
+    /** 滚动窗口内最早一行 —— 只用来描述这批统计覆盖的区间，不要拿它算采样时长 */
     since: rows[0]?.probed_at ?? null,
+    /** 全时段最早一次探测 —— 判定采样是否满 24h 用这个 */
+    firstProbedAt: first?.first_probed_at ?? null,
     sources,
     colos: [...byColo.entries()]
       .map(([colo, c]) => ({ colo, total: c.total, ok: c.ok, rate: c.ok / c.total }))
