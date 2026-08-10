@@ -27,5 +27,8 @@ jobs:
       - name: 解析器失效告警
         if: failure()
         run: |
-          echo "::error::上游数据源契约被破坏 —— 检查 apps/api/src/sources/ 下的解析器"
-          echo "对照 plan「七、风险与退路」：应启用多源 fallback（东财 → 新浪 → 蛋卷）"
+          echo "::error::上游契约测试失败 —— 检查 apps/api/src/sources/ 下的解析器"
+          echo "见 docs/data-sources.md「契约测试为什么会红」。红了只有两种可能："
+          echo "  1. 真的契约破坏（4xx / HTML 错误页 / 非法 JSON / 断言不符）→ 改解析器"
+          echo "  2. 全部用例都被跳过 → Actions 出口整体不通，不是上游改了"
+          echo "传输层抖动（ETIMEDOUT / socket 关闭 / 5xx）会 skip 成黄色警告，不会红。"

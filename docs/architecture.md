@@ -206,7 +206,8 @@ interface Notifier {
 | 风险 | 缓解 / 退路 |
 |---|---|
 | **CF 出口 IP 抓不到上游** | ① 激进缓存压低请求量 ② 中央化抓取 ③ 多源降级链 ④ 终极退路：上游抓取全迁 GitHub Actions，Workers 只读自己的 R2/KV —— **架构不用推倒**。已部分兑现，详见 docs/data-sources.md |
-| 上游结构变更 | `DataSource` 接口 + 多源 fallback；契约测试打真实端点，CI 定期跑 |
+| ⚠️ **终极退路本身未经验证** | 上游按地域派发源站，Actions（Azure）拿到的源站已实测出间歇性传输层失败，而 CF 出口同期 265/265。**启用退路前必须先在 Actions 侧挂连续探针**，否则是从一个未验证出口换到另一个。见 docs/data-sources.md「出口地域决定你能拿到哪个源站」 |
+| 上游结构变更 | `DataSource` 接口 + 多源 fallback；契约测试打真实端点，CI 定期跑。传输层抖动会 skip 而非 fail —— 分类规则见 docs/data-sources.md「契约测试为什么会红」 |
 | 上游故障导致 UI 空白 | 永远返回 last-known-good + 陈旧度徽章，绝不空白 |
 | D1 写入超限 | 净值历史走 R2 |
 | 估值误差误导用户 | 精度分级 + 持仓陈旧天数明示 + QDII/债基禁用估值 |

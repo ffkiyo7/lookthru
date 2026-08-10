@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
+import { assertNotAllUnreachable, liveIt } from './live-helpers';
 import {
   fetchFundList,
   fetchHoldings,
@@ -17,6 +18,9 @@ const SAMPLE = '161725';
 /** 华夏成长混合 —— 最老的主动基金之一 */
 const SAMPLE_ACTIVE = '000001';
 
+// 打真实端点的用例一律用 liveIt：连不上要跳过，连上了不对才算契约破坏。理由见 live-helpers.ts
+afterAll(assertNotAllUnreachable);
+
 describe('纯函数', () => {
   it('msToDate 按 UTC+8 转换，不偏移一天', () => {
     // 东财时间戳是北京时间当日零点 = UTC 前一日 16:00
@@ -33,7 +37,7 @@ describe('纯函数', () => {
 });
 
 describe('东财 pingzhongdata', () => {
-  it('解析出净值历史、仓位、重仓股 secid', async () => {
+  liveIt('解析出净值历史、仓位、重仓股 secid', async () => {
     const d = await fetchPingzhongData(SAMPLE);
 
     expect(d.code).toBe(SAMPLE);
@@ -61,7 +65,7 @@ describe('东财 pingzhongdata', () => {
 });
 
 describe('东财 持仓明细（估值引擎的 w_i）', () => {
-  it('返回报告期、权重、行业分类', async () => {
+  liveIt('返回报告期、权重、行业分类', async () => {
     const h = await fetchHoldings(SAMPLE);
 
     expect(h.reportDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
@@ -87,7 +91,7 @@ describe('东财 持仓明细（估值引擎的 w_i）', () => {
 });
 
 describe('东财 历史净值 lsjz', () => {
-  it('返回带日期与涨跌幅的净值行', async () => {
+  liveIt('返回带日期与涨跌幅的净值行', async () => {
     const rows = await fetchNavHistory(SAMPLE_ACTIVE, 1, 5);
     expect(rows.length).toBe(5);
     for (const r of rows) {
@@ -100,7 +104,7 @@ describe('东财 历史净值 lsjz', () => {
 });
 
 describe('跨源一致性（最强的正确性检验）', () => {
-  it('pingzhongdata 与 lsjz 的最新净值日期/数值一致 —— 验证时区换算', async () => {
+  liveIt('pingzhongdata 与 lsjz 的最新净值日期/数值一致 —— 验证时区换算', async () => {
     const [pz, lsjz] = await Promise.all([
       fetchPingzhongData(SAMPLE),
       fetchNavHistory(SAMPLE, 1, 1),
@@ -113,7 +117,7 @@ describe('跨源一致性（最强的正确性检验）', () => {
     expect(pzLast.unitNav).toBeCloseTo(emLast.unitNav, 4);
   });
 
-  it('新浪与东财的净值一致', async () => {
+  liveIt('新浪与东财的净值一致', async () => {
     const [sinaMap, emRows] = await Promise.all([
       fetchNavBatch([SAMPLE, SAMPLE_ACTIVE]),
       fetchNavHistory(SAMPLE, 1, 1),
@@ -125,7 +129,7 @@ describe('跨源一致性（最强的正确性检验）', () => {
     expect(sinaMap.get(SAMPLE_ACTIVE)).toBeDefined();
   });
 
-  it('fetchLatestNav 批量返回并算出涨跌幅', async () => {
+  liveIt('fetchLatestNav 批量返回并算出涨跌幅', async () => {
     const m = await fetchLatestNav([SAMPLE, SAMPLE_ACTIVE]);
     expect(m.size).toBe(2);
     const v = m.get(SAMPLE)!;
@@ -135,7 +139,7 @@ describe('跨源一致性（最强的正确性检验）', () => {
 });
 
 describe('东财 批量实时行情', () => {
-  it('股票与 ETF 混合批量返回', async () => {
+  liveIt('股票与 ETF 混合批量返回', async () => {
     const q = await fetchQuotes(['1.600519', '1.510300', '0.159915']);
     expect(q.size).toBe(3);
     const mt = q.get('1.600519')!;
@@ -146,7 +150,7 @@ describe('东财 批量实时行情', () => {
 });
 
 describe('东财 搜索建议', () => {
-  it('中文关键词返回基金代码', async () => {
+  liveIt('中文关键词返回基金代码', async () => {
     const r = await searchFunds('易方达');
     expect(r.length).toBeGreaterThan(0);
     expect(r[0]!.code).toMatch(/^\d{6}$/);
@@ -155,7 +159,7 @@ describe('东财 搜索建议', () => {
 });
 
 describe('东财 全量基金列表', () => {
-  it('解析出万级基金且包含样本基金', async () => {
+  liveIt('解析出万级基金且包含样本基金', async () => {
     const list = await fetchFundList();
     expect(list.length).toBeGreaterThan(10_000);
     const sample = list.find((f) => f.code === SAMPLE);
