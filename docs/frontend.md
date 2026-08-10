@@ -53,10 +53,11 @@
 | `WarnBar` / `InfoBar` | `components/ui.tsx` | 警示与提示条 |
 | `Toggle` / `Segmented` / `IconCircle` | `components/ui.tsx` | 交互控件 |
 | `Money` / `Change` | `components/Money.tsx` | 金额与涨跌幅 |
+| `EmptyState` / `ErrorState` / `*Skeleton` / `FreshnessLine` | `components/states.tsx` | 空态 / 加载态 / 陈旧态 |
 | `PrecisionBadge` / `PrecisionLegend` | `components/PrecisionBadge.tsx` | 估值精度 |
 | `NavChart` / `Donut` | `components/charts.tsx` | 净值曲线、行业环形图 |
 
-格式化函数在 `lib/format.ts`：`formatMoney` `formatPct` `formatNav` `formatShares` `formatYi` `staleDays` `direction` `dirClass`。
+格式化函数在 `lib/format.ts`：`formatMoney` `formatPct` `formatNav` `formatShares` `formatYi` `staleDays` `formatClock` `relativeTime` `direction` `dirClass`。
 
 ### `Money` / `Change`
 
@@ -127,7 +128,46 @@
 
 ### 7. 上游故障时显示 last-known-good + 陈旧度，绝不空白
 
-宁可显示「3 分钟前的数据」，也不要显示空白或骨架屏转圈。
+宁可显示「3 分钟前的数据」，也不要显示空白或骨架屏转圈。实现见下一条。
+
+### 8. 空态 / 加载态 / 陈旧态是三件事，不能互相代替
+
+全在 `components/states.tsx`。
+
+| 状态 | 含义 | 用什么 |
+|---|---|---|
+| 空态 | 请求成功了，结果就是空的 | `EmptyPortfolio` / `EmptyXRay` / 通用 `EmptyState` |
+| 加载态 | **一份数据都还没有**（冷启动） | `PortfolioSkeleton` / `XRaySkeleton` |
+| 陈旧态 | 有数据但是旧的 | `FreshnessLine` |
+| 彻底失败 | 冷启动 + 上游同时挂 | `ErrorState` |
+
+三条硬规则：
+
+1. **有缓存就不要用骨架屏。** 骨架屏只属于冷启动。盘中把已经显示出来的数字换成转圈是负体验 —— 那正是不变量 #7 要禁止的
+2. **`FreshnessLine` 的圆点必须用 `success`/`warn` 这类固定语义色，不能用 `up`/`down`。** 后者会跟着用户的涨跌配色偏好翻转，而「数据是不是活的」跟涨跌毫无关系（原来写死的那行就是 `bg-up`，踩过）
+3. **失败态必须给重试出口。** `FreshnessLine` 的 `onRetry` 接 TanStack Query 的 `refetch`，不传的话用户只能干等
+
+两种「陈旧」不要混：
+
+| | 含义 | 组件 |
+|---|---|---|
+| `WarnBar 持仓数据已过期 N 天` | **季报报告期**的年龄，决定估值精度 | `WarnBar` + `staleDays()` |
+| `数据停在 15:10（23 分钟前）` | **这份数据几点抓的**，决定今天的数字还能不能信 | `FreshnessLine` + `relativeTime()` |
+
+两者会同时出现在同一张卡片上，含义完全不同。
+
+**骨架屏的几何要照抄真实卡片**，否则数据到达时整页跳版。真实卡片高度随数据浮动（`PositionCard` 实测 213–260px），对不齐是必然的 —— 压到**下限**，让版面只会收紧、不会下坠。骨架块用半透明白而不是固定色，因为它会出现在 page / card / 汇总卡渐变三种底上。
+
+#### 怎么看这几屏
+
+它们在正常使用中几乎看不到（空态只对新用户出现，陈旧态要等上游真挂）。加了查询参数强制切换：
+
+```
+/?state=empty      /?state=loading    /?state=stale
+/?state=failing    /xray?state=empty  /xray?state=loading
+```
+
+见 `lib/preview.ts`。只影响 UI 分支、不碰数据，**生产环境也保留** —— 部署后随时能对着真机核对。改完这几屏请务必用它复查一遍，否则没人会发现改坏了。
 
 ---
 

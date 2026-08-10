@@ -32,6 +32,9 @@ function val(
   };
 }
 
+/** 这份 fixture 的「抓取时刻」—— FreshnessLine 用它演示实时态。接后端时换成 dataUpdatedAt */
+export const MOCK_UPDATED_AT = Date.now() - 40_000;
+
 export const MOCK_POSITIONS: Position[] = [
   {
     fundCode: '161725',

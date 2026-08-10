@@ -2,42 +2,106 @@ import { Link } from 'react-router-dom';
 import type { Position } from '@lookthru/shared';
 import { Change, Money } from '../components/Money';
 import { PrecisionBadge, PrecisionLegend } from '../components/PrecisionBadge';
+import { EmptyPortfolio, FreshnessLine, PortfolioSkeleton } from '../components/states';
 import { Card, IconCircle, WarnBar } from '../components/ui';
 import { formatNav, formatShares } from '../lib/format';
 import { usePrefs } from '../lib/prefs';
-import { MOCK_POSITIONS, summarize } from '../lib/mock';
+import { previewState } from '../lib/preview';
+import { MOCK_POSITIONS, MOCK_UPDATED_AT, summarize } from '../lib/mock';
 
 export function Portfolio() {
-  const positions = MOCK_POSITIONS;
-  const s = summarize(positions);
   const { updown } = usePrefs();
+
+  // ── 数据接入点 ─────────────────────────────────────────────────────────
+  // 接后端时把这四行换成 useQuery，下面的分支不用动：
+  //   const { data = [], isPending, isRefetchError, dataUpdatedAt, refetch } = useQuery(...)
+  // fixture 按 @lookthru/shared 的真实类型构造，替换数据源即可。
+  const preview = previewState();
+  const positions: Position[] = preview === 'empty' ? [] : MOCK_POSITIONS;
+  const loading: boolean = preview === 'loading';
+  const failing: boolean = preview === 'failing';
+  const updatedAt: number | null =
+    preview === 'stale' || preview === 'failing' ? Date.now() - 23 * 60_000 : MOCK_UPDATED_AT;
+  // ──────────────────────────────────────────────────────────────────────
+
+  const header = (
+    <header className="flex items-center justify-between px-0.5 pt-[22px] pb-4">
+      <div className="flex flex-col gap-0.5">
+        <h1 className="text-xl font-bold tracking-wide">我的持仓</h1>
+        <div className="text-xs text-ink-faint">
+          {/* 加载时还不知道有几只；空仓时下面的空态已经说了，这里再写「0 只基金」是重复 */}
+          {loading || positions.length === 0 ? '' : `${positions.length} 只基金 · `}
+          {updown === 'red-up' ? '红涨绿跌' : '绿涨红跌'}
+        </div>
+      </div>
+      <Link to="/settings">
+        <IconCircle>
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+          >
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4" />
+          </svg>
+        </IconCircle>
+      </Link>
+    </header>
+  );
+
+  // 冷启动才用骨架屏；有旧数据时走下面的 FreshnessLine 陈旧态（UI 不变量 #7）
+  if (loading) {
+    return (
+      <>
+        {header}
+        <PortfolioSkeleton />
+      </>
+    );
+  }
+
+  if (positions.length === 0) {
+    return (
+      <>
+        {header}
+        <EmptyPortfolio />
+      </>
+    );
+  }
+
+  return (
+    <Loaded
+      positions={positions}
+      header={header}
+      failing={failing}
+      updatedAt={updatedAt}
+      // 接后端时换成 useQuery 的 refetch。失败态没有重试出口的话，用户只能干等。
+      onRetry={preview ? () => location.reload() : undefined}
+    />
+  );
+}
+
+function Loaded({
+  positions,
+  header,
+  failing,
+  updatedAt,
+  onRetry,
+}: {
+  positions: Position[];
+  header: React.ReactNode;
+  failing: boolean;
+  updatedAt: number | null;
+  onRetry?: () => void;
+}) {
+  const s = summarize(positions);
 
   return (
     <>
-      <header className="flex items-center justify-between px-0.5 pt-[22px] pb-4">
-        <div className="flex flex-col gap-0.5">
-          <h1 className="text-xl font-bold tracking-wide">我的持仓</h1>
-          <div className="text-xs text-ink-faint">
-            {positions.length} 只基金 · {updown === 'red-up' ? '红涨绿跌' : '绿涨红跌'}
-          </div>
-        </div>
-        <Link to="/settings">
-          <IconCircle>
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.7"
-              strokeLinecap="round"
-            >
-              <circle cx="12" cy="12" r="3" />
-              <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4" />
-            </svg>
-          </IconCircle>
-        </Link>
-      </header>
+      {header}
 
       {/* 汇总 */}
       <div className="rounded-[22px] border border-line-card bg-[linear-gradient(158deg,#1c1f27_0%,#131519_78%)] px-5 pt-[22px] pb-[18px] shadow-[0_8px_30px_rgba(0,0,0,.35)]">
@@ -51,10 +115,12 @@ export function Portfolio() {
           <SummaryTile label="持有收益" amount={s.holdingReturn} pct={s.holdingReturnPct} />
         </div>
 
-        <div className="mt-4 flex items-center gap-[7px] text-[11.5px] text-ink-dimmer">
-          <span className="size-1.5 shrink-0 animate-ecpulse rounded-full bg-up" />
-          <span>估算 · 14:23 更新 · 收盘后以官方净值为准</span>
-        </div>
+        <FreshnessLine
+          at={updatedAt}
+          failing={failing}
+          onRetry={onRetry}
+          liveNote="收盘后以官方净值为准"
+        />
 
         {s.unestimatedCount > 0 && (
           <div className="mt-2 text-[11px] text-ink-faintest">
@@ -128,9 +194,9 @@ function PositionCard({ position: p }: { position: Position }) {
 
         <div className="text-[11.5px] text-ink-dim">{v?.basis.note}</div>
 
-        {v?.basis.staleDays !== null && v?.basis.staleDays !== undefined && v.basis.staleDays > 30 && (
-          <WarnBar>持仓数据已过期 {v.basis.staleDays} 天</WarnBar>
-        )}
+        {v?.basis.staleDays !== null &&
+          v?.basis.staleDays !== undefined &&
+          v.basis.staleDays > 30 && <WarnBar>持仓数据已过期 {v.basis.staleDays} 天</WarnBar>}
 
         <div className="flex gap-1.5 border-t border-line-soft pt-3">
           <Cell label="持有份额">

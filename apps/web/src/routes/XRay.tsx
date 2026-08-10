@@ -1,13 +1,10 @@
 import { useState } from 'react';
 import { Change, Money } from '../components/Money';
 import { Donut } from '../components/charts';
+import { EmptyXRay, XRaySkeleton } from '../components/states';
 import { Card } from '../components/ui';
-import {
-  MOCK_EXPOSURE,
-  MOCK_SECTORS,
-  MOCK_XRAY_META,
-  type ExposureRow,
-} from '../lib/mock';
+import { MOCK_EXPOSURE, MOCK_SECTORS, MOCK_XRAY_META, type ExposureRow } from '../lib/mock';
+import { previewState } from '../lib/preview';
 
 /**
  * 持仓穿透 —— 本产品的杀手锏。
@@ -15,17 +12,47 @@ import {
  * 「被 N 只基金持有」可展开，是全页信息核心。
  */
 export function XRay() {
+  // ── 数据接入点 ─────────────────────────────────────────────────────────
+  // 穿透依赖持仓：没有持仓就没有可穿透的东西，走空态而不是空列表。
+  const preview = previewState();
+  const exposure = preview === 'empty' ? [] : MOCK_EXPOSURE;
+  const sectors = MOCK_SECTORS;
   const meta = MOCK_XRAY_META;
-  const max = MOCK_EXPOSURE[0]?.pct ?? 1;
+  const loading: boolean = preview === 'loading';
+  // ──────────────────────────────────────────────────────────────────────
+
+  const max = exposure[0]?.pct ?? 1;
+
+  const header = (
+    <header className="flex items-center gap-2.5 px-0.5 pt-5 pb-3.5">
+      <h1 className="text-xl font-bold tracking-wide">持仓穿透</h1>
+      <span className="rounded-[7px] border border-accent/25 bg-accent/13 px-2.5 py-0.5 text-[11px] font-semibold text-accent-soft">
+        看穿真实敞口
+      </span>
+    </header>
+  );
+
+  if (loading) {
+    return (
+      <>
+        {header}
+        <XRaySkeleton />
+      </>
+    );
+  }
+
+  if (exposure.length === 0) {
+    return (
+      <>
+        {header}
+        <EmptyXRay />
+      </>
+    );
+  }
 
   return (
     <>
-      <header className="flex items-center gap-2.5 px-0.5 pt-5 pb-3.5">
-        <h1 className="text-xl font-bold tracking-wide">持仓穿透</h1>
-        <span className="rounded-[7px] border border-accent/25 bg-accent/13 px-2.5 py-0.5 text-[11px] font-semibold text-accent-soft">
-          看穿真实敞口
-        </span>
-      </header>
+      {header}
 
       <div className="flex items-start gap-2.5 rounded-[14px] border border-warn/20 bg-warn/8 px-3.5 py-3.5">
         <svg
@@ -57,7 +84,7 @@ export function XRay() {
       </div>
 
       <div className="flex flex-col gap-[11px]">
-        {MOCK_EXPOSURE.map((row, i) => (
+        {exposure.map((row, i) => (
           <ExposureCard key={row.stockCode} row={row} rank={i + 1} maxPct={max} />
         ))}
       </div>
@@ -67,17 +94,15 @@ export function XRay() {
         <div className="mb-1.5 text-[15px] font-semibold">行业集中度</div>
         <div className="flex items-center gap-[18px]">
           <div className="relative size-[130px] shrink-0">
-            <Donut segments={MOCK_SECTORS} />
+            <Donut segments={sectors} />
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <div className="text-[11px] text-ink-muted">最大行业</div>
-              <div className="mt-px text-[12.5px] font-semibold text-ink">
-                {MOCK_SECTORS[0]!.name}
-              </div>
-              <div className="text-base font-bold text-accent">{MOCK_SECTORS[0]!.pct}%</div>
+              <div className="mt-px text-[12.5px] font-semibold text-ink">{sectors[0]!.name}</div>
+              <div className="text-base font-bold text-accent">{sectors[0]!.pct}%</div>
             </div>
           </div>
           <div className="flex flex-1 flex-col gap-[11px]">
-            {MOCK_SECTORS.map((s) => (
+            {sectors.map((s) => (
               <div key={s.name} className="flex items-center gap-2.5">
                 <span className="size-2.5 rounded-[3px]" style={{ background: s.color }} />
                 <span className="flex-1 text-[12.5px] text-ink-body">{s.name}</span>
@@ -109,7 +134,7 @@ export function XRay() {
         </div>
         <div className="text-[13px] leading-relaxed text-[#c8ccd3]">
           前 5 大重仓股占总资产 <b className="text-ink">{meta.top5Pct}%</b>，单一行业（
-          {MOCK_SECTORS[0]!.name}）占 <b className="text-ink">{MOCK_SECTORS[0]!.pct}%</b>。集中度
+          {sectors[0]!.name}）占 <b className="text-ink">{sectors[0]!.pct}%</b>。集中度
           <b className="text-ink">高于</b>你持仓基金的平均水平。
         </div>
         <div className="mt-3 border-t border-line-soft pt-[11px] text-[11px] text-ink-faintest">
