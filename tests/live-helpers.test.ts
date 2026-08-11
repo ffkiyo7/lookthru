@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { unreachableReason } from './live-helpers';
-import { UpstreamError } from '../apps/api/src/sources/http';
+import { fetchText, UpstreamError } from '../apps/api/src/sources/http';
 
 const undiciTimeout = () => {
   const inner: any = new Error('connect ETIMEDOUT 123.249.33.119:443');
@@ -44,4 +44,28 @@ describe('应失败（契约破坏）', () => {
   it('非法 JSON', () =>
     expect(unreachableReason(new UpstreamError('响应不是合法 JSON', null, 'em'))).toBeNull());
   it('断言失败', () => expect(unreachableReason(new Error('expected 3 to be 2'))).toBeNull());
+});
+
+describe('上游礼貌限流', () => {
+  it('origin 已空闲时不再额外等待抖动', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-11T00:00:00Z'));
+    const random = vi.spyOn(Math, 'random').mockReturnValue(1);
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('ok', { status: 200 }));
+    try {
+      const request = fetchText('https://idle-origin.example/data', {
+        source: 'idle-origin-test',
+        retries: 0,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchMock).toHaveBeenCalledOnce();
+      await expect(request).resolves.toMatchObject({ text: 'ok', status: 200 });
+    } finally {
+      fetchMock.mockRestore();
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  });
 });

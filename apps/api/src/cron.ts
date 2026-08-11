@@ -24,6 +24,8 @@ export type ScheduledTask =
   | 'IDLE'
   | 'UNKNOWN';
 
+const CALENDAR_WARNING_TTL_SECONDS = 3 * 24 * 60 * 60;
+
 function beijingParts(scheduledTime: number): { hour: number; minute: number } {
   const date = new Date(scheduledTime + 8 * 60 * 60 * 1000);
   return { hour: date.getUTCHours(), minute: date.getUTCMinutes() };
@@ -44,6 +46,27 @@ export function classifyScheduledTask(cron: string, scheduledTime: number): Sche
   return morning || afternoon ? 'VALUATION' : 'IDLE';
 }
 
+async function logUnavailableCalendarOncePerDay(
+  env: Env,
+  task: ScheduledTask,
+  date: string,
+): Promise<void> {
+  const message = `[cron] 交易日历不可用，跳过 ${task} date=${date}`;
+  const key = `alert:trading-calendar-unavailable:${date}`;
+  try {
+    if ((await env.CACHE.get(key)) !== null) {
+      console.log(message);
+      return;
+    }
+    await env.CACHE.put(key, '1', { expirationTtl: CALENDAR_WARNING_TTL_SECONDS });
+    console.warn(message);
+  } catch (error) {
+    // 告警去重失败时保留原始原因，并继续 warn；不能为了降噪把真正的 KV 故障藏掉。
+    console.error(`[cron] 交易日历告警去重失败 key=${key}`, error);
+    console.warn(message);
+  }
+}
+
 export async function runScheduledTask(
   controller: ScheduledController,
   env: Env,
@@ -57,7 +80,7 @@ export async function runScheduledTask(
     const tradingDay = await tradingDayStatus(env, controller.scheduledTime);
     if (!tradingDay.available) {
       // 日历缺失时宁可停跑，也不能制造永远无法与官方净值对账的估值样本。
-      console.warn(`[cron] 交易日历不可用，跳过 ${task} date=${tradingDay.date}`);
+      await logUnavailableCalendarOncePerDay(env, task, tradingDay.date);
       return;
     }
     if (!tradingDay.isTradingDay) {

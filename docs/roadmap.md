@@ -1,6 +1,6 @@
 # 进度与下一步
 
-更新于 2026-08-11。
+更新于 2026-08-12。
 
 ---
 
@@ -11,7 +11,7 @@
 | Phase | 内容 | 状态 |
 |---|---|---|
 | **P0** | 出口风险验证（阻塞性） | ✅ **通过**（30.9h，三端点 288/288 全 100%） |
-| P1 | 基金库 + 搜索 + 详情 + 手动持仓录入 + 官方净值收益 | 🟡 UI 全完成；数据层代码与远端 D1 schema 已落地，Worker 尚未部署，持仓/详情仍走 fixture |
+| P1 | 基金库 + 搜索 + 详情 + 手动持仓录入 + 官方净值收益 | 🟡 UI 全完成；数据层已部署（D1 + Cron + 净值落库 + KV），持仓/详情仍走 fixture |
 | P2 | 自建估值引擎 + 精度分级 + 盘中刷新 | ⚪ 类型与 UI 就位，**引擎未写** |
 | P3 | 收益可视化 | 🟡 净值曲线已实现，归因/日收益柱状未做 |
 | P4 | Notifier（飞书 → Telegram → Discord） | ⚪ 仅设置页 UI |
@@ -29,12 +29,12 @@
 |---|---|
 | Workers Paid | ✅ 已订阅，`[limits] cpu_ms = 30000` |
 | D1 `lookthru` | ✅ `0001_probe.sql` + `0002_data_layer.sql` 已应用远端；五张数据层表只读核验通过 |
-| KV `CACHE` | 🟡 搜索、基金分类、最新净值与交易日历缓存已实现；随 Worker 部署生效 |
-| R2 `lookthru-archive` | 🟡 binding 与读写验证通过；`calendar/trading_days.json` 尚不存在，其余归档 pipeline 也未建 |
-| Cron | 🟡 正式分派、配置同步测试、未知表达式告警与交易日历守卫已实现；线上仍是旧 Worker |
-| GitHub Actions | 🟡 只有契约测试，`pipelines/` 尚未建 |
+| KV `CACHE` | ✅ 搜索、基金分类、最新净值、交易日历与告警去重均已上线 |
+| R2 `lookthru-archive` | 🟡 `calendar/trading_days.json` 已生效（242 天，覆盖至 2026-12-31）；其余归档 pipeline 未建 |
+| Cron | ✅ 正式分派 + 配置同步测试 + 未知表达式告警 + 交易日历守卫，已部署 |
+| GitHub Actions | 🟡 契约测试 + 交易日历 workflow；**缺 `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` secrets，定时刷新跑不起来** |
 
-> **部署口径**：远端 D1 migration 已完成；提交 `9490f85` 的 Worker/KV/Cron/health 代码尚未部署。下面写“已实现”时指仓库代码，不等于线上已经生效。
+> **部署口径**：数据层与交易日历已部署生效（Worker 版本 `0bc4e252`）。写“已实现”时默认指仓库代码，不等于线上已生效 —— 这两件事必须分开说。
 
 ---
 
@@ -76,7 +76,7 @@
 2. ✅ **Cron 分派** —— 正式时刻表与探针并存；代码与 `wrangler.toml` 有同步测试，未知表达式会告警
 3. ✅ **官方净值落库** —— 普通基金以新浪批量为主，货币基金单独存万份收益；旧日期不能覆盖新日期，官方值会回填估值样本
 4. ✅ **KV 缓存层** —— 搜索、基金分类、最新净值和交易日历均已接入；支持 last-known-good 与 `null` 负缓存
-5. ⚪ **交易日历 pipeline + 可用性指示** —— health/守卫代码已完成，但生成 pipeline 与 R2 对象未完成。必须生成 `calendar/trading_days.json`，每年生成、每月校验；`/api/health` 暴露 `tradingCalendar.available/generatedAt/days`。日历不可用时估值、预热和收盘样本任务 fail closed，不能退化成 `2-6` 工作日猜测。`/probe` 面板已有对应指示灯（三态：未上报 / 未就绪 / 就绪，就绪但生成超过 60 天会告警），日历一写进 R2 最多 5 分钟就会翻绿
+5. 🟡 **交易日历 pipeline + 可用性指示** —— pipeline 与 R2 对象已完成（`pipelines/trading_calendar.py` 解析上交所年度休市通知，全量校验后写 R2；`.github/workflows/trading-calendar.yml` 每月校验、12/25 生成双年）。`/api/health` 暴露 `tradingCalendar`，`/probe` 面板有对应指示灯。**剩两件未闭环**：GitHub secrets 未配置（见下），以及 `coversUntil` 尚未上报（见「日历会在跨年时静默断掉」）
 
 日历对象的格式已经被 `parseTradingCalendar()` 锁死，pipeline 必须照着产出，否则会被当成非法直接丢弃（进而 fail closed）：
 
@@ -85,6 +85,27 @@
 ```
 
 `tradingDays` 每项必须是 `YYYY-MM-DD`；重复项会去重、顺序会重排，但**非法格式一项都不能有** —— 校验是全量的，一项不合格整份日历作废。
+
+#### 日历会在跨年时静默断掉
+
+当前日历覆盖到 **2026-12-31**（242 天，从 2026-08-12 起还剩 96 个交易日）。`_download_notices()` 里下一年是**可选**的：
+
+```python
+years = [start_year]
+if start_year + 1 in links:
+    years.append(start_year + 1)
+```
+
+12/25 那次运行 `--year` 默认是 2026。**如果上交所那时还没发 2027 年的通知，脚本不会报错** —— 它照常生成一份只含 2026 的日历，写进 R2，`generatedAt` 刷成崭新的。于是：workflow 绿、`available: true`、生成时间新鲜，而 1 月 4 日开市后 `isTradingDay` 每天都是 false，估值静默停摆。**所有指示灯全绿，系统是死的。**
+
+两个必须补的口子：
+
+- **后端**：`/api/health` 增加 `coversUntil`（日历最后一天）。前端已经准备好读它，字段一上报指示灯就自动从「按生成时间推测」切到「按剩余天数判定」
+- **pipeline**：12 月那次运行强制要求下一年公告存在，拿不到就 exit 1 让 workflow 红
+
+不完整的兜底：1 月 2 日的月度运行 `--year` 会变成 2027，拿不到通知会硬失败变红 —— 但那是断崖**之后**，且前提是 secrets 已配好。
+
+**普适教训**：可用性指示灯要测「还能覆盖多久」，不要测「多久前更新的」。两者平时相关，恰恰在最危险的场景里反向 —— 定时刷新会一直把「更新时间」刷新，而覆盖窗口在一天天缩短。`apps/web/src/lib/calendar.ts` 的注释和 `tests/calendar-coverage.test.ts` 锁住了这一点。
 
 做完这块，估值引擎才有「写完就能自证对错」的条件。
 
@@ -135,16 +156,14 @@
 （D1 建表 / Cron 分派 / KV 缓存已在第 0 步完成；交易日历 pipeline 仍是前置。）
 
 - **邀请码与注册流**：表建好之后的那一层。目前没有任何鉴权，`/api/*` 全部裸奔
-- **`pipelines/`**：GitHub Actions 侧的 Python 批处理。先做交易日历并写 R2，解除估值引擎的 fail-closed；之后补全量基金列表、净值归档和持仓明细。这里可以用 AKShare
+- **`pipelines/` 的其余批处理**：交易日历已完成。还差全量基金列表、净值归档、持仓明细。这里可以用 AKShare
 
 ---
 
 ## 待验证 / 遗留问题
 
-- **日历缺失期间的告警噪音** —— 部署后到日历建好之前，每个交易日会打约 244 行「交易日历不可用」（上午 121 + 下午 121 + 预热 + 收盘快照）。逻辑没错，但会把探针真正的失败告警冲掉 —— 跟契约测试当初的毛病同源：高频、已知、无行动价值的红色，会训练人忽略同一渠道里真正需要行动的红色。建议降成每天首次 `warn`、之后 `log`；日历建好后自然消失
-- **生产环境自称 development** —— `wrangler.toml` 是无条件的 `[vars] ENVIRONMENT = "development"`，线上 `/api/health` 也这么回。今天没有任何代码分支读它，所以不是 bug 是**陷阱**：哪天有人写 `if (env.ENVIRONMENT === 'production')` 去关调试端点或关 `?state=` 预览开关，会静默走错分支。要么加 `[env.production]`，要么干脆删掉这个变量 —— 别留着
+- **GitHub Actions 缺 Cloudflare 凭据** —— 仓库 Actions secrets 里没有 `CLOUDFLARE_API_TOKEN`（R2 Object Read & Write）和 `CLOUDFLARE_ACCOUNT_ID`。当前 2026 日历能用到年底，但每月刷新和 2027 自动生成都不会执行。**第一次红会在 2026-09-02 出现**
 - **`/api/*` 无鉴权** —— 站点是公开 URL，任何人都能打 `/api/probe/run` 触发一次探测、或者拿 `/api/quotes` 当免费行情代理。做用户系统时一并收口
-- **搜索混入股票的修复待部署验证** —— 解析器已要求 `FundBaseInfo` 非空并有单测；线上旧 Worker 在部署前仍可能把六位股票代码当基金返回
 - **交易日才能测的**：`push2delay` 的实际延时有多少（决定它作为兜底源时估值精度降几级）；估值引擎各精度档的实测误差。周末验不了
 - **「高」档精度徽章待设计确认** —— 设计稿缺这一档，当前是插值补的，见 [frontend.md](frontend.md#2-精度徽章不可弱化)
 - **搜索结果缺涨跌幅** —— 东财 suggest 不返回前收盘价。搜索 KV 缓存已实现，部署后可以评估对结果追加一次新浪批量接口

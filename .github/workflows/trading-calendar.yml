@@ -1,0 +1,47 @@
+name: 交易日历
+
+# 需要仓库 secrets: CLOUDFLARE_API_TOKEN（R2 Object Read & Write）和
+# CLOUDFLARE_ACCOUNT_ID。产物固定写入 lookthru-archive/calendar/trading_days.json。
+on:
+  schedule:
+    - cron: '15 22 1 * *' # 北京时间每月 2 日 06:15：重新取官方源并全量校验
+    - cron: '15 22 24 12 *' # 北京时间 12 月 25 日 06:15：下一年公告发布后生成双年日历
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 从上交所年度休市通知生成并全量校验
+        run: python3 pipelines/trading_calendar.py --output "$RUNNER_TEMP/calendar/trading_days.json"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: 写入 R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: >-
+          npx wrangler r2 object put lookthru-archive/calendar/trading_days.json
+          --file "$RUNNER_TEMP/calendar/trading_days.json"
+          --content-type application/json
+          --cache-control no-cache
+          --remote
+      - name: 回读确认 R2 内容与本次产物一致
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler r2 object get lookthru-archive/calendar/trading_days.json \
+            --file "$RUNNER_TEMP/calendar/remote-trading_days.json" \
+            --remote
+          cmp "$RUNNER_TEMP/calendar/trading_days.json" "$RUNNER_TEMP/calendar/remote-trading_days.json"

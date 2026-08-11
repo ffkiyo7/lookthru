@@ -46,7 +46,8 @@ async function waitForOriginSlot(url: string): Promise<void> {
   const previous = originTails.get(origin) ?? Promise.resolve();
   const current = previous.catch(() => undefined).then(async () => {
     const elapsed = Date.now() - (lastRequestStartedAt.get(origin) ?? 0);
-    const waitMs = Math.max(0, 1_000 - elapsed) + Math.random() * 150;
+    const remainingMs = Math.max(0, 1_000 - elapsed);
+    const waitMs = remainingMs === 0 ? 0 : remainingMs + Math.random() * 150;
     if (waitMs > 0) await sleep(waitMs);
     lastRequestStartedAt.set(origin, Date.now());
   });

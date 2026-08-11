@@ -11,7 +11,6 @@ const app = new Hono<{ Bindings: Env }>();
 app.get('/api/health', async (c) =>
   c.json({
     ok: true,
-    env: c.env.ENVIRONMENT,
     colo: (c.req.raw as { cf?: { colo?: string } }).cf?.colo ?? null,
     time: new Date().toISOString(),
     tradingCalendar: await tradingCalendarInfo(c.env),

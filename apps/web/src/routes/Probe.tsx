@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { CALENDAR_STALE_DAYS, coverage, type CalendarInfo } from '../lib/calendar';
 import { relativeTime } from '../lib/format';
 
 /**
@@ -33,21 +34,12 @@ type Stats = {
   colos: { colo: string; total: number; ok: number; rate: number }[];
 };
 
-type CalendarInfo = {
-  available: boolean;
-  generatedAt: string | null;
-  days: number;
-};
-
 /**
  * 三态而不是两态。「线上 Worker 还没有这个字段」和「日历确实不存在」是两回事，
  * 混成一个会让人在部署前就以为日历丢了，或者部署后以为指示灯坏了。
  */
 type CalendarState =
   { kind: 'loading' } | { kind: 'unreported' } | { kind: 'info'; info: CalendarInfo };
-
-/** 日历按年生成、按月校验。生成太久远说明多半没覆盖到当前年度。 */
-const CALENDAR_STALE_DAYS = 60;
 
 const PASS = 0.95;
 
@@ -92,21 +84,47 @@ function CalendarPanel({ state }: { state: CalendarState }) {
     );
   }
 
-  const staleMs = generatedAt ? Date.now() - new Date(generatedAt).getTime() : null;
-  const stale = staleMs !== null && staleMs > CALENDAR_STALE_DAYS * 86_400_000;
+  const cov = coverage(state.info);
+
+  // 日历已经跑到末尾 = 估值此刻就是死的，而不是「快到期了」。用 danger 而不是 warn。
+  if (cov.kind === 'exhausted') {
+    return (
+      <div className={`${shell} border-danger/40 bg-danger/10`}>
+        <strong>估值链路已停摆</strong> · 交易日历用尽于 {cov.until}
+        <div className="mt-1.5 text-[12.5px] text-ink-muted">
+          日历还在，只是没有今天。之后每一天都会被判成非交易日，估值、预热与收盘快照全部跳过 ——
+          不会报错，不会告警，只是什么都不发生。需要立刻重跑{' '}
+          <code className="font-mono">pipelines/trading_calendar.py</code> 补上新一年。
+        </div>
+      </div>
+    );
+  }
+
+  const alarm = cov.kind === 'ending' || cov.kind === 'stale-fallback';
 
   return (
-    <div className={`${shell} ${stale ? 'border-warn/40 bg-warn/10' : 'border-line bg-card'}`}>
+    <div className={`${shell} ${alarm ? 'border-warn/40 bg-warn/10' : 'border-line bg-card'}`}>
       <span className="inline-flex items-center gap-2">
-        <span className={`size-1.5 shrink-0 rounded-full ${stale ? 'bg-warn' : 'bg-success'}`} />
+        <span className={`size-1.5 shrink-0 rounded-full ${alarm ? 'bg-warn' : 'bg-success'}`} />
         <strong>交易日历就绪</strong>
       </span>
       <span className="text-ink-muted"> · {days} 个交易日</span>
+      {(cov.kind === 'ok' || cov.kind === 'ending') && (
+        <span className="text-ink-muted"> · 覆盖至 {cov.until}</span>
+      )}
       {generatedAt && <span className="text-ink-muted"> · 生成于 {relativeTime(generatedAt)}</span>}
-      {stale && (
+      {cov.kind === 'ending' && (
         <div className="mt-1.5 text-[12.5px] text-ink-muted">
-          距上次生成已超过 {CALENDAR_STALE_DAYS} 天，可能未覆盖当前年度 ——
-          日历一旦跑到末尾，之后每天都会被判成非交易日，估值静默停摆。
+          还有 {cov.daysLeft} 天用完。跨年前必须拿到下一年的上交所休市公告 ——
+          日历用尽不会报错，只会让估值每天静默跳过。
+        </div>
+      )}
+      {cov.kind === 'stale-fallback' && (
+        <div className="mt-1.5 text-[12.5px] text-ink-muted">
+          距上次生成已超过 {CALENDAR_STALE_DAYS} 天，可能未覆盖当前年度。
+          <br />
+          这只是退化判断 —— 线上 Worker 还没上报 <code className="font-mono">coversUntil</code>
+          ，补上之后这里会直接按剩余天数告警，不再靠生成时间推测。
         </div>
       )}
     </div>

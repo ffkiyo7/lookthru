@@ -120,6 +120,7 @@ export async function syncOfficialNavs(env: Env): Promise<OfficialNavSyncResult>
 
 export async function persistOfficialNavs(env: Env, rows: LatestOfficialNav[]): Promise<number> {
   const cacheRows: LatestOfficialNav[] = [];
+  let stored = 0;
   for (let offset = 0; offset < rows.length; offset += DB_BATCH_ROWS) {
     const chunk = rows.slice(offset, offset + DB_BATCH_ROWS);
     const placeholders = chunk.map(() => '?').join(', ');
@@ -140,7 +141,9 @@ export async function persistOfficialNavs(env: Env, rows: LatestOfficialNav[]): 
       return current === undefined || row.navDate >= current;
     });
     const statements: D1PreparedStatement[] = [];
+    const navRowsByStatementIndex = new Map<number, LatestOfficialNav>();
     for (const row of accepted) {
+      navRowsByStatementIndex.set(statements.length, row);
       statements.push(
         env.DB.prepare(
           `INSERT INTO latest_official_navs (
@@ -185,8 +188,22 @@ export async function persistOfficialNavs(env: Env, rows: LatestOfficialNav[]): 
         );
       }
     }
-    if (statements.length > 0) await env.DB.batch(statements);
-    cacheRows.push(...accepted);
+    if (statements.length > 0) {
+      const results = await env.DB.batch(statements);
+      for (const [statementIndex, row] of navRowsByStatementIndex) {
+        const result = results[statementIndex];
+        if (result === undefined) {
+          throw new Error(`D1 batch 缺少净值写入结果 index=${statementIndex}`);
+        }
+        if (result.meta.changes < 0 || result.meta.changes > 1) {
+          throw new Error(
+            `D1 净值写入变更数异常 code=${row.fundCode} changes=${result.meta.changes}`,
+          );
+        }
+        stored += result.meta.changes;
+        if (result.meta.changes === 1) cacheRows.push(row);
+      }
+    }
   }
 
   // D1 是 last-known-good；KV 只是读缓存。即使 KV 写失败，官方值也不会丢。
@@ -201,5 +218,5 @@ export async function persistOfficialNavs(env: Env, rows: LatestOfficialNav[]): 
   if (failedWrites.length > 0) {
     console.warn(`[official-nav] KV 回填失败 ${failedWrites.length}/${cacheRows.length}`);
   }
-  return cacheRows.length;
+  return stored;
 }

@@ -54,6 +54,3 @@ id = "PLACEHOLDER_KV_CACHE_ID"
 [[r2_buckets]]
 binding = "ARCHIVE"
 bucket_name = "lookthru-archive"
-
-[vars]
-ENVIRONMENT = "development"

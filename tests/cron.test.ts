@@ -12,6 +12,7 @@ describe('Cron 分派', () => {
     const block = /\[triggers\]\s*crons\s*=\s*\[([\s\S]*?)\]/.exec(toml)?.[1] ?? '';
     const configured = [...block.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
     expect(configured.sort()).toEqual(Object.values(CRONS).sort());
+    expect(toml).not.toContain('ENVIRONMENT');
   });
 
   it('保留独立的出口探针', () => {
@@ -54,30 +55,45 @@ describe('Cron 分派', () => {
     warn.mockRestore();
   });
 
-  it('交易日历缺失时估值任务 fail closed', async () => {
+  it('交易日历缺失时 fail closed，同一天只首次 warn', async () => {
     const values = new Map<string, string>();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    await runScheduledTask(
-      {
-        cron: CRONS.valuation,
-        scheduledTime: utc('2026-08-11T01:30:00Z'),
-        type: 'scheduled',
-        noRetry: () => undefined,
-      },
-      {
-        CACHE: {
-          get: async (key: string) => {
-            const value = values.get(key);
-            return value === undefined ? null : JSON.parse(value);
-          },
-          put: async (key: string, value: string) => {
-            values.set(key, value);
-          },
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const env = {
+      CACHE: {
+        get: async (key: string) => {
+          const value = values.get(key);
+          return value === undefined ? null : JSON.parse(value);
         },
-        ARCHIVE: { get: async () => null },
-      } as never,
-    );
-    expect(warn).toHaveBeenCalledWith('[cron] 交易日历不可用，跳过 VALUATION date=2026-08-11');
-    warn.mockRestore();
+        put: async (key: string, value: string) => {
+          values.set(key, value);
+        },
+      },
+      ARCHIVE: { get: async () => null },
+    } as never;
+    try {
+      for (let minute = 30; minute <= 31; minute++) {
+        await runScheduledTask(
+          {
+            cron: CRONS.valuation,
+            scheduledTime: utc(`2026-08-11T01:${minute}:00Z`),
+            type: 'scheduled',
+            noRetry: () => undefined,
+          },
+          env,
+        );
+      }
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        '[cron] 交易日历不可用，跳过 VALUATION date=2026-08-11',
+      );
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(log).toHaveBeenCalledWith(
+        '[cron] 交易日历不可用，跳过 VALUATION date=2026-08-11',
+      );
+    } finally {
+      warn.mockRestore();
+      log.mockRestore();
+    }
   });
 });
