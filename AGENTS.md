@@ -36,6 +36,10 @@ npm run deploy           # 构建前端 + 发布 Worker
 
 `npm run dev` 前必须先 `npm run build`，否则 Worker 没有 assets 可托管。
 
+`npm test` 不含契约测试（`vitest.config.ts` 里排掉了 `*.live.test.ts`）。契约测试打真实上游、会因抖动随机变红，混进常规套件就会训练出「无视红色」的习惯，而它唯一的价值就是变红时提醒你上游变了。要跑用 `npm run test:live`。
+
+**改了前端却看不到变化，先怀疑 service worker。** `vite-plugin-pwa` 的 precache 会继续吐旧 bundle —— 症状是页面上的 `script[src]` hash 跟 `dist/` 里的对不上。DevTools → Application → Service Workers → Unregister，再 `caches.delete()`，然后硬刷新。不要因此去怀疑自己的改动没生效。
+
 **资源 id 不入库**：`wrangler.toml` 里是 `PLACEHOLDER_<KEY>`，真实值在 gitignore 的 `.wrangler-ids`，由 `scripts/gen-wrangler.mjs` 生成 `.wrangler.generated.toml` 供 wrangler 使用。所有 npm 脚本已接好，直接用即可。新增资源时同步更新 `.wrangler-ids.example`。
 
 ---
