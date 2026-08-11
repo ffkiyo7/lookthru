@@ -38,21 +38,27 @@ export interface ProbeRun {
   }[];
 }
 
-export async function runProbe(env: Env, colo?: string | null): Promise<ProbeRun> {
-  const probedAt = new Date().toISOString();
-  const resolvedColo = colo ?? (await currentColo());
+interface ProbeTarget {
+  source: string;
+  check(): Promise<{ detail: unknown; latencyMs: number }>;
+}
+
+export async function checkProbeTargets(
+  targets: readonly ProbeTarget[],
+): Promise<ProbeRun['results']> {
   const results: ProbeRun['results'] = [];
 
   // 串行执行：探针本身不能成为压垮上游的原因
-  for (const target of PROBE_TARGETS) {
+  for (const target of targets) {
     const started = Date.now();
     try {
-      const detail = await target.check();
+      const result = await target.check();
       results.push({
         source: target.source,
         ok: true,
-        latencyMs: Date.now() - started,
-        detail: String(detail),
+        // fetchText 在限流排队之后才开始计时；使用源内耗时才能保持 P0 基线可比。
+        latencyMs: result.latencyMs,
+        detail: String(result.detail),
         error: null,
       });
     } catch (e) {
@@ -65,6 +71,13 @@ export async function runProbe(env: Env, colo?: string | null): Promise<ProbeRun
       });
     }
   }
+  return results;
+}
+
+export async function runProbe(env: Env, colo?: string | null): Promise<ProbeRun> {
+  const probedAt = new Date().toISOString();
+  const resolvedColo = colo ?? (await currentColo());
+  const results = await checkProbeTargets(PROBE_TARGETS);
 
   const stmt = env.DB.prepare(
     `INSERT INTO probe_results (probed_at, source, ok, latency_ms, detail, error, colo)

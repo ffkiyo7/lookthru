@@ -1,16 +1,20 @@
 import { Hono } from 'hono';
+import { cachedJson, searchCacheKey } from './cache';
+import { runScheduledTask } from './cron';
 import type { Env } from './env';
 import { PASS_THRESHOLD, probeStats, runProbe } from './probe';
 import { fetchHoldings, fetchQuotesResilient, searchFunds } from './sources';
+import { tradingCalendarInfo } from './trading-calendar';
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.get('/api/health', (c) =>
+app.get('/api/health', async (c) =>
   c.json({
     ok: true,
     env: c.env.ENVIRONMENT,
     colo: (c.req.raw as { cf?: { colo?: string } }).cf?.colo ?? null,
     time: new Date().toISOString(),
+    tradingCalendar: await tradingCalendarInfo(c.env),
   }),
 );
 
@@ -33,9 +37,12 @@ app.post('/api/probe/run', async (c) => {
 
 // ── 数据源冒烟接口：部署后可直接在浏览器验证上游可达性 ────────
 app.get('/api/funds/search', async (c) => {
-  const q = c.req.query('q');
+  const q = c.req.query('q')?.trim();
   if (!q) return c.json({ error: 'missing q' }, 400);
-  return c.json(await searchFunds(q));
+  if (q.length > 64) return c.json({ error: 'query too long' }, 400);
+  return c.json(
+    await cachedJson(c.env.CACHE, searchCacheKey(q), 60 * 60, () => searchFunds(q)),
+  );
 });
 
 app.get('/api/funds/:code/holdings', async (c) => {
@@ -72,17 +79,7 @@ export default {
     return env.ASSETS.fetch(request);
   },
 
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(
-      runProbe(env).then((run) => {
-        const failed = run.results.filter((r) => !r.ok);
-        if (failed.length > 0) {
-          console.warn(
-            `[probe] colo=${run.colo} 失败 ${failed.length}/${run.results.length}:`,
-            failed.map((f) => `${f.source}=${f.error}`).join(' | '),
-          );
-        }
-      }),
-    );
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(runScheduledTask(event, env));
   },
 };

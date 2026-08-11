@@ -461,8 +461,14 @@ export async function searchFunds(keyword: string): Promise<FundSearchHit[]> {
     referer: REFERER_FUND,
     timeoutMs: 10_000,
   });
+  return parseSearchResponse(raw);
+}
+
+export function parseSearchResponse(raw: RawSearchResp): FundSearchHit[] {
   return (raw.Datas ?? [])
-    .filter((d) => /^\d{6}$/.test(d.CODE))
+    // 股票也是 6 位代码，但 FundBaseInfo 为 null。只按代码过滤会把 600519
+    // 当基金返回，随后详情请求才失败，属于延迟暴露的静默脏数据。
+    .filter((d) => /^\d{6}$/.test(d.CODE) && d.FundBaseInfo !== null && d.FundBaseInfo !== undefined)
     .map((d) => {
       const info = d.FundBaseInfo ?? {};
       const type = info.FTYPE ?? d.CATEGORYDESC ?? '';

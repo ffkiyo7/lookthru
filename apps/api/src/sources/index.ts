@@ -27,7 +27,7 @@ export const PROBE_TARGETS = [
     endpoint: em.FUND_LIST_URL,
     /** 3.1MB，只验证开头特征，不整体解析（解析在 GitHub Actions 侧做） */
     check: async () => {
-      const { text, bytes } = await fetchText(em.FUND_LIST_URL, {
+      const { text, bytes, latencyMs } = await fetchText(em.FUND_LIST_URL, {
         source: 'probe:fundlist',
         referer: 'https://fund.eastmoney.com/',
         timeoutMs: 30_000,
@@ -38,7 +38,7 @@ export const PROBE_TARGETS = [
       // 真正的解析在 GitHub Actions 侧做（见 plan 3.3），这里多解析一遍纯属浪费。
       const head = text.charCodeAt(0) === 0xfeff ? text.substring(1, 32) : text.substring(0, 32);
       if (!head.startsWith('var r = [[')) throw new Error('内容不符合预期');
-      return bytes;
+      return { detail: bytes, latencyMs };
     },
   },
   {
@@ -46,14 +46,14 @@ export const PROBE_TARGETS = [
     label: '单基金全量档案',
     endpoint: em.pingzhongUrl('161725'),
     check: async () => {
-      const { text, bytes } = await fetchText(em.pingzhongUrl('161725'), {
+      const { text, bytes, latencyMs } = await fetchText(em.pingzhongUrl('161725'), {
         source: 'probe:pingzhong',
         referer: 'https://fund.eastmoney.com/',
         timeoutMs: 20_000,
         retries: 0,
       });
       if (!text.includes('Data_netWorthTrend')) throw new Error('缺少 Data_netWorthTrend');
-      return bytes;
+      return { detail: bytes, latencyMs };
     },
   },
   {
@@ -66,12 +66,18 @@ export const PROBE_TARGETS = [
      * 24h 后能看出东财是彻底不可用还是分片抖动。
      */
     check: async () => {
+      // 这里刻意保留端到端计时：quotes 的基线衡量整条降级链（含源间切换与限流排队），
+      // 与 fundlist/pingzhong 的单次 HTTP 网络耗时口径不同，不能横向比较三个绝对值。
+      const started = Date.now();
       const r = await fetchQuotesResilient(['1.600519', '1.510300']);
       if (!r.provider) {
         throw new Error(`全链失败: ${r.attempts.map((a) => `${a.provider}=${a.error}`).join(' | ')}`);
       }
       const fellBack = r.attempts.length - 1;
-      return `${r.provider} n=${r.quotes.size} 降级${fellBack}层${r.delayed ? ' 延时' : ''}`;
+      return {
+        detail: `${r.provider} n=${r.quotes.size} 降级${fellBack}层${r.delayed ? ' 延时' : ''}`,
+        latencyMs: Date.now() - started,
+      };
     },
   },
 ] as const;

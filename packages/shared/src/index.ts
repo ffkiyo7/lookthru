@@ -26,6 +26,39 @@ export const NavPoint = z.object({
 });
 export type NavPoint = z.infer<typeof NavPoint>;
 
+export const OfficialNavValueKind = z.enum(['UNIT_NAV', 'TEN_THOUSAND_YIELD']);
+export type OfficialNavValueKind = z.infer<typeof OfficialNavValueKind>;
+
+const OfficialValueBase = {
+  fundCode: z.string().regex(/^\d{6}$/),
+  navDate: z.string(),
+  source: z.string(),
+  fetchedAt: z.string(),
+};
+
+/** 最新官方值。货币基金的万份收益与普通基金净值在类型层也不能混用。 */
+export const LatestOfficialNav = z.discriminatedUnion('valueKind', [
+  z.object({
+    ...OfficialValueBase,
+    valueKind: z.literal('UNIT_NAV'),
+    unitNav: z.number(),
+    accNav: z.number().nullable(),
+    chgPct: z.number().nullable(),
+    tenThousandYield: z.null(),
+    sevenDayYieldPct: z.null(),
+  }),
+  z.object({
+    ...OfficialValueBase,
+    valueKind: z.literal('TEN_THOUSAND_YIELD'),
+    unitNav: z.null(),
+    accNav: z.null(),
+    chgPct: z.null(),
+    tenThousandYield: z.number(),
+    sevenDayYieldPct: z.number().nullable(),
+  }),
+]);
+export type LatestOfficialNav = z.infer<typeof LatestOfficialNav>;
+
 /** 季报前十大重仓股，weight 为占基金净值比(%) */
 export const TopHolding = z.object({
   stockCode: z.string(),

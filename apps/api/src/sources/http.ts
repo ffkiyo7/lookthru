@@ -38,6 +38,22 @@ export interface FetchResult {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const lastRequestStartedAt = new Map<string, number>();
+const originTails = new Map<string, Promise<void>>();
+
+async function waitForOriginSlot(url: string): Promise<void> {
+  const origin = new URL(url).origin;
+  const previous = originTails.get(origin) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(async () => {
+    const elapsed = Date.now() - (lastRequestStartedAt.get(origin) ?? 0);
+    const waitMs = Math.max(0, 1_000 - elapsed) + Math.random() * 150;
+    if (waitMs > 0) await sleep(waitMs);
+    lastRequestStartedAt.set(origin, Date.now());
+  });
+  originTails.set(origin, current);
+  await current;
+  if (originTails.get(origin) === current) originTails.delete(origin);
+}
 
 export async function fetchText(url: string, opts: FetchOptions): Promise<FetchResult> {
   const { timeoutMs = 12_000, retries = 2, source, referer, decodeAs = 'utf-8' } = opts;
@@ -48,8 +64,11 @@ export async function fetchText(url: string, opts: FetchOptions): Promise<FetchR
       // 指数退避 + 抖动，避免同时惊群打爆上游
       await sleep(300 * 2 ** (attempt - 1) + Math.random() * 200);
     }
-    const started = Date.now();
     try {
+      // 上游 ToS 是灰区。同一 origin 的并发请求也必须排队，否则 Promise.all
+      // 会绕过“礼貌限流”，用户增长后静默变成高频抓取器。
+      await waitForOriginSlot(url);
+      const started = Date.now();
       const res = await fetch(url, {
         headers: {
           'User-Agent': DEFAULT_UA,
