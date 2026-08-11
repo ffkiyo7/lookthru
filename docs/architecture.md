@@ -115,6 +115,8 @@ transactions(
   note
 )
 positions_cache(user_id, fund_code, shares, cost_total, updated_at)  -- 物化视图
+latest_official_navs(...)      -- 最新官方值；单位净值与货币基金万份收益分型存储
+valuation_samples(...)         -- 每只基金每天一条 14:55 验收样本，晚间官方值回填
 ```
 
 - **v1 UI 只暴露「当前持仓快照」**（份额 + 成本），内部写成一条 `type=SNAPSHOT` 的流水
@@ -146,6 +148,8 @@ D1   用户/邀请码/持仓/交易流水/推送绑定/基金元数据索引/最
 KV   quote:{secid}       TTL 60s
      est:{fund_code}     TTL 60s
      navlatest:{code}    TTL 1h
+     search:{keyword}    TTL 1h
+     fundmeta:{code}     TTL 6h
 R2   /meta/fundlist.json                    全量基金列表
      /nav/{fund_code}.json.gz               净值全历史
      /holdings/{code}/{report_date}.json    持仓明细
@@ -189,13 +193,15 @@ interface Notifier {
 
 | 时间 | 任务 | UTC cron |
 |---|---|---|
-| 09:25 | 交易日检查 + 预热重仓股 secid | `25 1 * * 1-5` |
-| 09:30–11:30 / 13:00–15:00 每 1 min | 拉行情 → 算估值 → 写 KV | `* 1-3,5-7 * * 1-5` |
-| 15:05 | 收盘快照 | `5 7 * * 1-5` |
-| 19:30–22:30 每 30 min | 拉当日官方净值 | `30,0 11-14 * * 1-5` |
-| 21:00 | IM 日报 | `0 13 * * 1-5` |
+| 09:25 | 交易日检查 + 预热重仓股 secid | `25 1 * * 2-6` |
+| 09:30–11:30 / 13:00–15:00 每 1 min | 拉行情 → 算估值 → 写 KV | `* 1-3,5-7 * * 2-6` |
+| 15:05 | 收盘快照 | `5 7 * * 2-6` |
+| 19:30–22:30 每 30 min | 拉当日官方净值 | `30 11-14 * * 2-6` + `0 12-14 * * 2-6` |
+| 21:00 | IM 日报 | `0 13 * * 2-6` |
 
-当前 `wrangler.toml` 里是 P0 的 `*/5 * * * *`，P1 起替换为上表。
+Cloudflare 的星期编号是 `1=周日`，因此周一至周五必须写 `2-6`。分钟级表达式只能粗框小时，dispatcher 还会收紧到真实交易分钟；交易日最终以 R2 `calendar/trading_days.json` 为准，日历不可用时估值相关任务 fail closed。`/api/health` 暴露日历可用性。
+
+`wrangler.toml` 同时保留 P0 的 `*/5 * * * *` 探针与上表正式时刻表；测试会比较配置集合与代码中的 `CRONS` 注册表，未知表达式必须告警，不能静默变成空跑。
 
 **实时刷新方式**：客户端每 60s 轮询自己的 Worker（Worker 读 KV 缓存）。不用 Durable Objects / SSE —— 对当前规模是过度设计，且 DO 额外收费。
 
@@ -210,6 +216,7 @@ interface Notifier {
 | 上游结构变更 | `DataSource` 接口 + 多源 fallback；契约测试打真实端点，CI 定期跑。传输层抖动会 skip 而非 fail —— 分类规则见 docs/data-sources.md「契约测试为什么会红」 |
 | 上游故障导致 UI 空白 | 永远返回 last-known-good + 陈旧度徽章，绝不空白 |
 | D1 写入超限 | 净值历史走 R2 |
+| 交易日历缺失或 R2 抖动 | 日历结果可负缓存；估值/预热/收盘样本 fail closed，`/api/health` 明示 `tradingCalendar.available=false` |
 | 估值误差误导用户 | 精度分级 + 持仓陈旧天数明示 + QDII/债基禁用估值 |
 | 合规 | 邀请码制（非公开注册）；「客观指标提示」而非「投资建议」；全站免责声明；数据不批量转售 |
 | 上游 ToS 灰区 | 礼貌限流（≤1 req/s + jitter）、激进缓存、不做数据批量再分发 |

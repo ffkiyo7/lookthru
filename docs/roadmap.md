@@ -1,6 +1,6 @@
 # 进度与下一步
 
-更新于 2026-08-10。
+更新于 2026-08-11。
 
 ---
 
@@ -11,7 +11,7 @@
 | Phase | 内容 | 状态 |
 |---|---|---|
 | **P0** | 出口风险验证（阻塞性） | ✅ **通过**（30.9h，三端点 288/288 全 100%） |
-| P1 | 基金库 + 搜索 + 详情 + 手动持仓录入 + 官方净值收益 | 🟡 UI 全完成，搜索接了真实接口，持仓/详情走 fixture |
+| P1 | 基金库 + 搜索 + 详情 + 手动持仓录入 + 官方净值收益 | 🟡 UI 全完成；数据层代码与远端 D1 schema 已落地，Worker 尚未部署，持仓/详情仍走 fixture |
 | P2 | 自建估值引擎 + 精度分级 + 盘中刷新 | ⚪ 类型与 UI 就位，**引擎未写** |
 | P3 | 收益可视化 | 🟡 净值曲线已实现，归因/日收益柱状未做 |
 | P4 | Notifier（飞书 → Telegram → Discord） | ⚪ 仅设置页 UI |
@@ -28,11 +28,13 @@
 | 项 | 状态 |
 |---|---|
 | Workers Paid | ✅ 已订阅，`[limits] cpu_ms = 30000` |
-| D1 `lookthru` | ✅ 已建表（`0001_probe.sql`），读写验证通过 |
-| KV `CACHE` | ✅ 已创建，binding 就绪（**尚未实际使用**） |
-| R2 `lookthru-archive` | ✅ 已启用，put→get→delete 往返验证通过（**尚未实际使用**） |
-| Cron | ✅ `*/5 * * * *`（P0 用；P1 起换成 architecture.md 的时刻表） |
+| D1 `lookthru` | ✅ `0001_probe.sql` + `0002_data_layer.sql` 已应用远端；五张数据层表只读核验通过 |
+| KV `CACHE` | 🟡 搜索、基金分类、最新净值与交易日历缓存已实现；随 Worker 部署生效 |
+| R2 `lookthru-archive` | 🟡 binding 与读写验证通过；`calendar/trading_days.json` 尚不存在，其余归档 pipeline 也未建 |
+| Cron | 🟡 正式分派、配置同步测试、未知表达式告警与交易日历守卫已实现；线上仍是旧 Worker |
 | GitHub Actions | 🟡 只有契约测试，`pipelines/` 尚未建 |
+
+> **部署口径**：远端 D1 migration 已完成；提交 `9490f85` 的 Worker/KV/Cron/health 代码尚未部署。下面写“已实现”时指仓库代码，不等于线上已经生效。
 
 ---
 
@@ -50,6 +52,8 @@
 
 `quotes` 那项测的是整条降级链而不是单一主机 —— 单主机成功率对架构判定没有意义，「有没有一条路能拿到行情」才有。它的 p50 比另外两项高一个数量级（2411ms vs 219ms），这是绕开东财主域走分片的代价；估值引擎每分钟刷上百只重仓股时要留意批次并发，别让单次 cron 拖太久。
 
+延时口径也不同：`fundlist` / `pingzhong` 记录限流排队后的单次 HTTP 网络耗时；`quotes` 记录整条降级链端到端耗时，包含源间切换与限流排队。三项各自与自己的历史基线比较，**不要横向比较绝对值**。
+
 风险已部分兑现：东财行情线从 CF 出口不可用，但基金列表与档案正常，**不需要动用「全迁 GitHub Actions」的终极退路**。详见 [data-sources.md](data-sources.md)。
 
 ### 两条不要读过头的口径
@@ -66,13 +70,13 @@
 
 **为什么排在估值引擎前面**：估值引擎的验收标准是「交易日 14:55 记录估值，次日与官方净值比对」。没有落库的地方，引擎写完那天一条都验不了，得等数据层建好再等若干个交易日；反过来先建数据层，引擎落地当天估值就自动被记下来，第二天早上直接有误差报表。这一块工作量也小得多。
 
-五件事，可以一次做完：
+五件事，其中前四项代码已完成，第五项仍阻塞估值引擎：
 
-1. **D1 建表** —— `users` / `positions`（或 `transactions`）/ `positions_cache`。表结构见 [architecture.md](architecture.md) 的「持仓数据模型」。migrations 目录里目前只有 `0001_probe.sql`
-2. **Cron 分派** —— `scheduled` 现在只跑探针。按 `wrangler.toml` 里注释的时刻表分派不同任务，**探针继续保留**（见上一节口径 1）
-3. **官方净值落库** —— 收盘后 19:30–22:30 拉当日净值。这是估值引擎的验收基准，也是持仓收益的真实来源
-4. **KV 缓存层** —— binding 已就绪但一行没用。搜索每次按键都打上游，这是现在就在发生的成本
-5. **交易日历 pipeline + 可用性指示** —— 生成交易日历并写入 R2 `calendar/trading_days.json`，每年生成、每月校验；`/api/health` 暴露 `tradingCalendar.available/generatedAt/days`。日历不可用时估值、预热和收盘样本任务必须 fail closed，不能退化成 `2-6` 工作日猜测
+1. ✅ **D1 建表** —— `users` / `transactions` / `positions_cache` / `latest_official_navs` / `valuation_samples` 已建，远端 migration 已完成
+2. ✅ **Cron 分派** —— 正式时刻表与探针并存；代码与 `wrangler.toml` 有同步测试，未知表达式会告警
+3. ✅ **官方净值落库** —— 普通基金以新浪批量为主，货币基金单独存万份收益；旧日期不能覆盖新日期，官方值会回填估值样本
+4. ✅ **KV 缓存层** —— 搜索、基金分类、最新净值和交易日历均已接入；支持 last-known-good 与 `null` 负缓存
+5. ⚪ **交易日历 pipeline + 可用性指示** —— health/守卫代码已完成，但生成 pipeline 与 R2 对象未完成。必须生成 `calendar/trading_days.json`，每年生成、每月校验；`/api/health` 暴露 `tradingCalendar.available/generatedAt/days`。日历不可用时估值、预热和收盘样本任务 fail closed，不能退化成 `2-6` 工作日猜测
 
 做完这块，估值引擎才有「写完就能自证对错」的条件。
 
@@ -120,10 +124,10 @@
 
 ## 还需要建的东西
 
-（D1 建表 / Cron 分派 / KV 缓存已并入上面的第 0 步。）
+（D1 建表 / Cron 分派 / KV 缓存已在第 0 步完成；交易日历 pipeline 仍是前置。）
 
 - **邀请码与注册流**：表建好之后的那一层。目前没有任何鉴权，`/api/*` 全部裸奔
-- **`pipelines/`**：GitHub Actions 侧的 Python 批处理（全量基金列表、净值归档、持仓明细、交易日历）。这里可以用 AKShare
+- **`pipelines/`**：GitHub Actions 侧的 Python 批处理。先做交易日历并写 R2，解除估值引擎的 fail-closed；之后补全量基金列表、净值归档和持仓明细。这里可以用 AKShare
 
 ---
 
@@ -131,10 +135,10 @@
 
 - **生产环境自称 development** —— `wrangler.toml` 是无条件的 `[vars] ENVIRONMENT = "development"`，线上 `/api/health` 也这么回。今天没有任何代码分支读它，所以不是 bug 是**陷阱**：哪天有人写 `if (env.ENVIRONMENT === 'production')` 去关调试端点或关 `?state=` 预览开关，会静默走错分支。要么加 `[env.production]`，要么干脆删掉这个变量 —— 别留着
 - **`/api/*` 无鉴权** —— 站点是公开 URL，任何人都能打 `/api/probe/run` 触发一次探测、或者拿 `/api/quotes` 当免费行情代理。做用户系统时一并收口
-- **搜索会返回股票** —— `searchFunds` 只按 `/^\d{6}$/` 过滤代码，而 A 股代码也是 6 位。搜「茅台」可能混进 `600519`，它的 `FundBaseInfo` 为空。后端要按 `FTYPE` 过滤，前端也要对非法基金代码有防御（别让详情页去请求一个不存在的基金档案）
+- **搜索混入股票的修复待部署验证** —— 解析器已要求 `FundBaseInfo` 非空并有单测；线上旧 Worker 在部署前仍可能把六位股票代码当基金返回
 - **交易日才能测的**：`push2delay` 的实际延时有多少（决定它作为兜底源时估值精度降几级）；估值引擎各精度档的实测误差。周末验不了
 - **「高」档精度徽章待设计确认** —— 设计稿缺这一档，当前是插值补的，见 [frontend.md](frontend.md#2-精度徽章不可弱化)
-- **搜索结果缺涨跌幅** —— 东财 suggest 不返回前收盘价。补的话要对结果再打一次新浪批量接口，等搜索端点加上 KV 缓存后再做，否则每次按键多打一次上游
+- **搜索结果缺涨跌幅** —— 东财 suggest 不返回前收盘价。搜索 KV 缓存已实现，部署后可以评估对结果追加一次新浪批量接口
 - **OCR 路线未 spike**（P6）。三条路线横评设计见下
 
 ### P6 OCR spike 设计

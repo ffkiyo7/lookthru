@@ -151,7 +151,7 @@ new Date(ms + 8 * 3600_000).toISOString().slice(0, 10)
 
 上游 ToS 是灰区。约束自己：
 
-- ≤ 1 req/s + jitter，`sources/http.ts` 已实现指数退避 + 抖动
-- 激进缓存（KV + Cache API）
+- 同一 origin 的请求起始间隔 ≥ 1s + jitter；`sources/http.ts` 会把并发与重试统一排队，避免 `Promise.all` 绕过限流
+- 激进缓存（KV + D1 last-known-good）；`null` 使用带标记的信封做负缓存，避免无效基金或缺失日历每轮重打上游/R2
 - 中央化抓取，绝不 per-user 打上游
 - 不做数据批量再分发
