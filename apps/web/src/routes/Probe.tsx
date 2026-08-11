@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react';
+import { relativeTime } from '../lib/format';
 
 /**
  * P0 出口探针面板。判定 Cloudflare Workers 出口能否稳定抓取东财 ——
  * 这是整个架构成立与否的判定点（见方案「七、风险与退路」）。
  * 通过标准：三端点成功率均 > 95%，采样 ≥ 24h。
+ *
+ * 另外挂了交易日历指示灯。日历缺失时后端会让估值/预热/收盘快照 fail closed，
+ * 那是对的，但唯一的痕迹是 Worker 日志里的一行 warn —— 没人会去看。
+ * 没有指示灯的话，「引擎按设计停用」和「引擎写坏了」在界面上完全一样。
  */
 
 type SourceStat = {
@@ -28,6 +33,22 @@ type Stats = {
   colos: { colo: string; total: number; ok: number; rate: number }[];
 };
 
+type CalendarInfo = {
+  available: boolean;
+  generatedAt: string | null;
+  days: number;
+};
+
+/**
+ * 三态而不是两态。「线上 Worker 还没有这个字段」和「日历确实不存在」是两回事，
+ * 混成一个会让人在部署前就以为日历丢了，或者部署后以为指示灯坏了。
+ */
+type CalendarState =
+  { kind: 'loading' } | { kind: 'unreported' } | { kind: 'info'; info: CalendarInfo };
+
+/** 日历按年生成、按月校验。生成太久远说明多半没覆盖到当前年度。 */
+const CALENDAR_STALE_DAYS = 60;
+
 const PASS = 0.95;
 
 function tone(rate: number) {
@@ -36,12 +57,69 @@ function tone(rate: number) {
   return { text: 'text-danger', bar: 'var(--color-danger)' };
 }
 
+function CalendarPanel({ state }: { state: CalendarState }) {
+  if (state.kind === 'loading') return null;
+
+  // 语义色一律用 warn / success 这类固定色，不能用 up / down ——
+  // 那两个会跟着用户的涨跌配色偏好翻转，指示灯的含义不能被偏好改变。
+  const shell = 'mb-5 rounded-xl border px-4 py-3.5 text-sm leading-relaxed';
+
+  if (state.kind === 'unreported') {
+    return (
+      <div className={`${shell} border-line bg-card text-ink-muted`}>
+        <strong className="text-ink-dim">交易日历 · 未知</strong>
+        <div className="mt-1 text-[12.5px]">
+          线上 Worker 尚未上报日历状态（该版本没有这个字段），不代表日历缺失。部署后此处会给出结论。
+        </div>
+      </div>
+    );
+  }
+
+  const { available, generatedAt, days } = state.info;
+
+  if (!available) {
+    return (
+      <div className={`${shell} border-warn/40 bg-warn/10`}>
+        <strong>估值链路已停用</strong> · 交易日历未就绪
+        <div className="mt-1.5 text-[12.5px] text-ink-muted">
+          R2 里缺 <code className="font-mono">calendar/trading_days.json</code>
+          ，估值、预热与收盘快照会 fail closed 直接跳过。这是设计行为，不是故障 ——
+          节假日的估值样本永远等不到官方净值对账，宁可不跑。日历由{' '}
+          <code className="font-mono">pipelines/</code>
+          生成，建好之前估值引擎不会产出任何数据。
+        </div>
+      </div>
+    );
+  }
+
+  const staleMs = generatedAt ? Date.now() - new Date(generatedAt).getTime() : null;
+  const stale = staleMs !== null && staleMs > CALENDAR_STALE_DAYS * 86_400_000;
+
+  return (
+    <div className={`${shell} ${stale ? 'border-warn/40 bg-warn/10' : 'border-line bg-card'}`}>
+      <span className="inline-flex items-center gap-2">
+        <span className={`size-1.5 shrink-0 rounded-full ${stale ? 'bg-warn' : 'bg-success'}`} />
+        <strong>交易日历就绪</strong>
+      </span>
+      <span className="text-ink-muted"> · {days} 个交易日</span>
+      {generatedAt && <span className="text-ink-muted"> · 生成于 {relativeTime(generatedAt)}</span>}
+      {stale && (
+        <div className="mt-1.5 text-[12.5px] text-ink-muted">
+          距上次生成已超过 {CALENDAR_STALE_DAYS} 天，可能未覆盖当前年度 ——
+          日历一旦跑到末尾，之后每天都会被判成非交易日，估值静默停摆。
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Probe() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [calendar, setCalendar] = useState<CalendarState>({ kind: 'loading' });
 
   useEffect(() => {
-    const load = () =>
+    const loadStats = () =>
       fetch('/api/probe/stats')
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
         .then((d: Stats) => {
@@ -49,8 +127,25 @@ export function Probe() {
           setErr(null);
         })
         .catch((e: Error) => setErr(e.message));
-    void load();
-    const t = setInterval(() => void load(), 30_000);
+
+    // health 单独取。它挂了不该把探针数据一起打掉 —— 两者互不依赖，
+    // 而探针结论才是这一页存在的理由。
+    const loadCalendar = () =>
+      fetch('/api/health')
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then((d: { tradingCalendar?: CalendarInfo }) => {
+          setCalendar(
+            d.tradingCalendar ? { kind: 'info', info: d.tradingCalendar } : { kind: 'unreported' },
+          );
+        })
+        .catch(() => setCalendar({ kind: 'unreported' }));
+
+    const load = () => {
+      void loadStats();
+      void loadCalendar();
+    };
+    load();
+    const t = setInterval(load, 30_000);
     return () => clearInterval(t);
   }, []);
 
@@ -115,6 +210,10 @@ export function Probe() {
             )}
           </div>
         )}
+
+        {/* 放在 P0 结论之后：这一页的主语是出口探针，日历是另一条链路的状态，
+            不能抢在结论前面把人带偏。 */}
+        <CalendarPanel state={calendar} />
 
         {stats?.sources.map((s) => {
           const t = tone(s.rate);

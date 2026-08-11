@@ -56,6 +56,7 @@
 | `EmptyState` / `ErrorState` / `*Skeleton` / `FreshnessLine` | `components/states.tsx` | 空态 / 加载态 / 陈旧态 |
 | `PrecisionBadge` / `PrecisionLegend` | `components/PrecisionBadge.tsx` | 估值精度 |
 | `NavChart` / `Donut` | `components/charts.tsx` | 净值曲线、行业环形图 |
+| `CalendarPanel` | `routes/Probe.tsx`（局部） | 交易日历指示灯。只服务运维面板，不进通用组件 |
 
 格式化函数在 `lib/format.ts`：`formatMoney` `formatPct` `formatNav` `formatShares` `formatYi` `staleDays` `formatClock` `relativeTime` `direction` `dirClass`。
 

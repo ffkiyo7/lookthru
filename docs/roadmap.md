@@ -76,7 +76,7 @@
 2. ✅ **Cron 分派** —— 正式时刻表与探针并存；代码与 `wrangler.toml` 有同步测试，未知表达式会告警
 3. ✅ **官方净值落库** —— 普通基金以新浪批量为主，货币基金单独存万份收益；旧日期不能覆盖新日期，官方值会回填估值样本
 4. ✅ **KV 缓存层** —— 搜索、基金分类、最新净值和交易日历均已接入；支持 last-known-good 与 `null` 负缓存
-5. ⚪ **交易日历 pipeline + 可用性指示** —— health/守卫代码已完成，但生成 pipeline 与 R2 对象未完成。必须生成 `calendar/trading_days.json`，每年生成、每月校验；`/api/health` 暴露 `tradingCalendar.available/generatedAt/days`。日历不可用时估值、预热和收盘样本任务 fail closed，不能退化成 `2-6` 工作日猜测
+5. ⚪ **交易日历 pipeline + 可用性指示** —— health/守卫代码已完成，但生成 pipeline 与 R2 对象未完成。必须生成 `calendar/trading_days.json`，每年生成、每月校验；`/api/health` 暴露 `tradingCalendar.available/generatedAt/days`。日历不可用时估值、预热和收盘样本任务 fail closed，不能退化成 `2-6` 工作日猜测。`/probe` 面板已有对应指示灯（三态：未上报 / 未就绪 / 就绪，就绪但生成超过 60 天会告警），日历一写进 R2 最多 5 分钟就会翻绿
 
 做完这块，估值引擎才有「写完就能自证对错」的条件。
 
