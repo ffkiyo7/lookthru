@@ -1,7 +1,8 @@
 import { listActiveFundCodes } from '../data/transactions';
 
 /**
- * roadmap 的固定验收样本：2 只场内、3 只场外指数、5 只主动权益。
+ * roadmap 的固定验收样本：2 只场内、3 只场外 ETF 联接指数、
+ * 1 只场外非联接被动指数、5 只主动权益。
  * 它们与真实用户持仓共用同一批抓取，确保空仓期也能每天留下 14:55 对账数据。
  */
 export const VALUATION_CALIBRATION_CODES = [
@@ -10,6 +11,8 @@ export const VALUATION_CALIBRATION_CODES = [
   '000961',
   '001051',
   '005918',
+  // 2026-08-12 实测：博时沪深300指数A，业绩基准为 95%×沪深300，且非联接、非场内。
+  '050002',
   '000001',
   '005827',
   '260108',

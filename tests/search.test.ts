@@ -64,4 +64,16 @@ describe('基金业绩基准解析', () => {
       }),
     ).toBeNull();
   });
+
+  it('兼容权重写在指数名称前面的业绩基准', () => {
+    expect(
+      parseFundBenchmark({
+        result_code: 0,
+        data: {
+          performance_bench_mark: '95%*沪深300指数+5%*银行同业存款利率',
+          benchmark_index: [{ symbol: 'SH000300', symbol_name: '沪深300指数' }],
+        },
+      }),
+    ).toEqual({ secid: '1.000300', name: '沪深300指数', weight: 95 });
+  });
 });

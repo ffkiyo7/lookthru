@@ -57,20 +57,23 @@ export async function getLatestOfficialNav(
   return value;
 }
 
-/** 每个基金每天只保留一条验收样本；Cron 至少一次投递也不会制造重复记录。 */
+export type ValuationSampleKind = 'CALIBRATION_1455' | 'CLOSE_1505';
+
+/** 每种采样口径每天只保留一条；Cron 至少一次投递不会制造重复记录。 */
 export async function recordValuationSample(
   db: D1Database,
   valuation: Valuation,
   tradeDate: string,
+  sampleKind: ValuationSampleKind,
   delayed: boolean,
 ): Promise<void> {
   await db
     .prepare(
       `INSERT INTO valuation_samples (
-        fund_code, trade_date, sampled_at, est_nav, est_chg_pct,
+        fund_code, trade_date, sample_kind, sampled_at, est_nav, est_chg_pct,
         precision, prev_nav, delayed, basis_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT (fund_code, trade_date) DO UPDATE SET
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (fund_code, trade_date, sample_kind) DO UPDATE SET
         sampled_at = excluded.sampled_at,
         est_nav = excluded.est_nav,
         est_chg_pct = excluded.est_chg_pct,
@@ -83,6 +86,7 @@ export async function recordValuationSample(
     .bind(
       valuation.fundCode,
       tradeDate,
+      sampleKind,
       valuation.estTime,
       valuation.estNav,
       valuation.estChgPct,

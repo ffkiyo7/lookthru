@@ -14,6 +14,11 @@ export interface SearchHit {
   navDate: string | null;
   company: string | null;
   isMoneyFund: boolean;
+  /** 与一小时基金信息缓存分离，按 60 秒刷新；上游故障时会标陈旧或不可用。 */
+  chgPct: number | null;
+  changeTime: string | null;
+  changeStale: boolean;
+  changeUnavailable: boolean;
 }
 
 /** 「混合型-偏股」→「混合型」，列表里只显示大类 */
@@ -36,6 +41,8 @@ export interface HoldingsResponse {
   holdings: { stockCode: string; stockName: string; weight: number; secid: string | null }[];
   coverageWeight: number;
   industries: { code: string; name: string; weight: number }[];
+  fetchedAt: string;
+  stale: boolean;
 }
 
 export function fetchHoldings(code: string): Promise<HoldingsResponse> {
@@ -57,9 +64,19 @@ export interface QuoteResponse {
   provider: string | null;
   /** true = 延时行情，不能当实时展示，估值精度需相应降级 */
   delayed: boolean;
+  fetchedAt: string | null;
+  staleSecids: string[];
+  unavailableSecids: string[];
   quotes: Record<string, Quote>;
 }
 
 export function fetchQuotes(secids: string[]): Promise<QuoteResponse> {
   return get<QuoteResponse>(`/api/quotes?secids=${secids.join(',')}`);
+}
+
+/** 公开基金详情只能取该基金披露持仓对应的行情，不能传任意 secid。 */
+export function fetchFundQuotes(code: string): Promise<
+  QuoteResponse & { holdingsReportDate: string | null; holdingsStale: boolean }
+> {
+  return get(`/api/funds/${code}/quotes`);
 }

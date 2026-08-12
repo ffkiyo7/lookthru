@@ -46,9 +46,11 @@ function escapedRegex(value: string): string {
 
 function indexWeight(description: string, indexName: string): number | null {
   const baseName = indexName.replace(/指数$/, '');
-  const match = new RegExp(
-    `${escapedRegex(baseName)}(?:全收益)?(?:指数)?(?:收益率)?[×*Xx](\\d+(?:\\.\\d+)?)%`,
-  ).exec(description.normalize('NFKC').replace(/\s/g, ''));
+  const compact = description.normalize('NFKC').replace(/\s/g, '');
+  const indexPattern = `${escapedRegex(baseName)}(?:全收益)?(?:指数)?(?:收益率)?`;
+  const match =
+    new RegExp(`${indexPattern}[×*Xx](\\d+(?:\\.\\d+)?)%`).exec(compact) ??
+    new RegExp(`(\\d+(?:\\.\\d+)?)%[×*Xx]${indexPattern}`).exec(compact);
   if (!match) return null;
   const weight = Number(match[1]);
   return Number.isFinite(weight) && weight >= 0 && weight <= 100 ? weight : null;

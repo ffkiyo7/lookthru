@@ -1,0 +1,107 @@
+name: 数据归档
+
+# 需要 CLOUDFLARE_API_TOKEN（R2 Object Read & Write）和 CLOUDFLARE_ACCOUNT_ID。
+# 三个 job 先在临时目录完整生成并校验，再逐对象写 R2，写完逐个回读比对。
+on:
+  schedule:
+    - cron: '0 22 * * *' # 北京时间每日 06:00：全量基金列表
+    - cron: '30 22 * * 0' # 北京时间每周一 06:30：固定验收池净值历史
+    - cron: '0 23 1 1,4,7,10 *' # 每季首月 2 日 07:00：固定验收池持仓披露
+  workflow_dispatch:
+    inputs:
+      codes:
+        description: 归档基金代码，逗号分隔
+        required: true
+        default: '510300,159919,000961,001051,005918,050002,000001,005827,260108,110022,001938'
+
+permissions:
+  contents: read
+
+env:
+  ARCHIVE_CODES: ${{ inputs.codes || '510300,159919,000961,001051,005918,050002,000001,005827,260108,110022,001938' }}
+
+jobs:
+  fund-list:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 22 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: 生成并全量校验基金列表
+        run: python3 pipelines/fund_list.py --output "$RUNNER_TEMP/archive/meta/fundlist.json"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: 写入并回读 R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler r2 object put lookthru-archive/meta/fundlist.json \
+            --file "$RUNNER_TEMP/archive/meta/fundlist.json" \
+            --content-type application/json --cache-control no-cache --remote
+          npx wrangler r2 object get lookthru-archive/meta/fundlist.json \
+            --file "$RUNNER_TEMP/remote-fundlist.json" --remote
+          cmp "$RUNNER_TEMP/archive/meta/fundlist.json" "$RUNNER_TEMP/remote-fundlist.json"
+
+  nav-history:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 22 * * 0'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: 抓取完整净值历史并校验页数
+        run: python3 pipelines/nav_history.py --codes "$ARCHIVE_CODES" --output-dir "$RUNNER_TEMP/archive"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: 逐对象写入并回读 R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          for file in "$RUNNER_TEMP"/archive/nav/*.json.gz; do
+            key="nav/$(basename "$file")"
+            remote="$RUNNER_TEMP/remote-$(basename "$file")"
+            npx wrangler r2 object put "lookthru-archive/$key" --file "$file" \
+              --content-type application/json --content-encoding gzip --cache-control no-cache --remote
+            npx wrangler r2 object get "lookthru-archive/$key" --file "$remote" --remote
+            cmp "$file" "$remote"
+          done
+
+  fund-holdings:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 23 1 1,4,7,10 *'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: 抓取持仓披露并校验报告期与覆盖率
+        run: python3 pipelines/fund_holdings.py --codes "$ARCHIVE_CODES" --output-dir "$RUNNER_TEMP/archive"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: 逐对象写入并回读 R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          while IFS= read -r file; do
+            key="${file#"$RUNNER_TEMP/archive/"}"
+            remote="$RUNNER_TEMP/remote-${key//\//-}"
+            npx wrangler r2 object put "lookthru-archive/$key" --file "$file" \
+              --content-type application/json --cache-control no-cache --remote
+            npx wrangler r2 object get "lookthru-archive/$key" --file "$remote" --remote
+            cmp "$file" "$remote"
+          done < <(find "$RUNNER_TEMP/archive/holdings" -type f -name '*.json' -print | sort)

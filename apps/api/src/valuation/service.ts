@@ -8,26 +8,31 @@ import {
   type Valuation as ValuationValue,
 } from '@lookthru/shared';
 import { z } from 'zod';
-import { getLatestOfficialNav, recordValuationSample } from '../data/navs';
+import {
+  getLatestOfficialNav,
+  recordValuationSample,
+  type ValuationSampleKind,
+} from '../data/navs';
 import type { Env } from '../env';
+import { getFundMeta } from '../fund-meta';
+import { getCachedHoldings } from '../fund-holdings';
 import {
   fetchFundBenchmark,
-  fetchHoldings,
   fetchPingzhongData,
   fetchQuotesResilient,
-  searchFunds,
 } from '../sources';
 import { beijingDate } from '../trading-calendar';
 import {
   ACTIVE_FALLBACK_BENCHMARK,
-  estimateValuation,
+  estimateValuationWithDiagnostics,
   requiredQuoteSecids,
   type ValuationFundInput,
+  type ValuationNoneCause,
 } from './engine';
 import { listValuationFundCodes } from './universe';
 
 const VALUATION_INPUT_TTL_SECONDS = 6 * 60 * 60;
-const VALUATION_TTL_SECONDS = 60;
+const VALUATION_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 const CalendarDate = z
   .string()
@@ -91,7 +96,7 @@ async function cachedInput(env: Env, code: string): Promise<ValuationFundInput |
 }
 
 export async function refreshValuationInput(env: Env, code: string): Promise<ValuationFundInput> {
-  const hit = (await searchFunds(code)).find((candidate) => candidate.code === code);
+  const hit = await getFundMeta(env, code);
   if (!hit) throw new Error(`基金搜索未返回精确代码 ${code}`);
 
   const disabled = isQdii(hit.type, hit.name) || isBondOrMoneyFund(hit.type);
@@ -112,7 +117,11 @@ export async function refreshValuationInput(env: Env, code: string): Promise<Val
       benchmark: null,
     };
   } else {
-    const [profile, holdings] = await Promise.all([fetchPingzhongData(code), fetchHoldings(code)]);
+    const [profile, holdingsSnapshot] = await Promise.all([
+      fetchPingzhongData(code),
+      getCachedHoldings(env, code),
+    ]);
+    const holdings = holdingsSnapshot.data;
     let matchedBenchmark = null;
     try {
       matchedBenchmark = await fetchFundBenchmark(code);
@@ -174,16 +183,27 @@ export async function prewarmValuationInputs(env: Env): Promise<PrewarmResult> {
 }
 
 export function shouldRecordValuationSample(scheduledTime: number): boolean {
+  return valuationSampleKind(scheduledTime) !== null;
+}
+
+export function valuationSampleKind(scheduledTime: number): ValuationSampleKind | null {
   const date = new Date(scheduledTime + 8 * 60 * 60 * 1000);
-  return date.getUTCHours() === 14 && date.getUTCMinutes() === 55;
+  if (date.getUTCHours() === 14 && date.getUTCMinutes() === 55) return 'CALIBRATION_1455';
+  if (date.getUTCHours() === 15 && date.getUTCMinutes() === 5) return 'CLOSE_1505';
+  return null;
 }
 
 export interface ValuationCycleResult {
   funds: number;
   valued: number;
+  precisionCounts: Record<ValuationValue['precision'], number>;
+  structuralNone: number;
+  missingInputNone: number;
+  missingInputs: { code: string; cause: Exclude<ValuationNoneCause, 'STRUCTURAL_POLICY'>; note: string }[];
   sampled: number;
   provider: string | null;
   delayed: boolean;
+  quoteChainFailure: string | null;
   failures: { code: string; error: Error }[];
 }
 
@@ -204,30 +224,43 @@ export async function runValuationCycle(
 
   const quoteSecids = [...new Set(inputs.flatMap(requiredQuoteSecids))];
   const quoteResult = await fetchQuotesResilient(quoteSecids);
-  if (quoteSecids.length > 0 && quoteResult.quotes.size === 0) {
-    throw new Error(
-      `估值行情全链失败: ${quoteResult.attempts
+  const quoteChainFailure =
+    quoteSecids.length > 0 && quoteResult.quotes.size === 0
+      ? `估值行情全链失败: ${quoteResult.attempts
         .map((attempt) => `${attempt.provider}=${attempt.error}`)
-        .join(' | ')}`,
-    );
-  }
+        .join(' | ')}`
+      : null;
 
   const estTime = new Date().toISOString();
   const valuations: ValuationValue[] = [];
+  const missingInputs: ValuationCycleResult['missingInputs'] = [];
+  const precisionCounts: ValuationCycleResult['precisionCounts'] = {
+    EXACT: 0,
+    HIGH: 0,
+    MEDIUM: 0,
+    LOW: 0,
+    NONE: 0,
+  };
+  let structuralNone = 0;
   for (const input of inputs) {
     try {
-      const required = requiredQuoteSecids(input);
-      if (required.length > 0 && required.every((secid) => !quoteResult.quotes.has(secid))) {
-        throw new Error(`本基金所需行情全部缺失 secids=${required.join(',')}`);
-      }
       const official = await getLatestOfficialNav(env, input.fundCode);
       const prevNav = official && official.valueKind === 'UNIT_NAV' ? official.unitNav : null;
-      valuations.push(
-        estimateValuation(input, prevNav, quoteResult.quotes, {
-          estTime,
-          delayed: quoteResult.delayed,
-        }),
-      );
+      const estimate = estimateValuationWithDiagnostics(input, prevNav, quoteResult.quotes, {
+        estTime,
+        delayed: quoteResult.delayed,
+      });
+      valuations.push(estimate.valuation);
+      precisionCounts[estimate.valuation.precision]++;
+      if (estimate.noneCause === 'STRUCTURAL_POLICY') {
+        structuralNone++;
+      } else if (estimate.noneCause !== null) {
+        missingInputs.push({
+          code: input.fundCode,
+          cause: estimate.noneCause,
+          note: estimate.valuation.basis.note,
+        });
+      }
     } catch (error) {
       failures.push({
         code: input.fundCode,
@@ -243,20 +276,26 @@ export async function runValuationCycle(
   }
 
   let sampled = 0;
-  if (shouldRecordValuationSample(scheduledTime)) {
+  const sampleKind = valuationSampleKind(scheduledTime);
+  if (sampleKind !== null) {
     const tradeDate = beijingDate(scheduledTime);
     for (const valuation of valuations) {
-      await recordValuationSample(env.DB, valuation, tradeDate, quoteResult.delayed);
+      await recordValuationSample(env.DB, valuation, tradeDate, sampleKind, quoteResult.delayed);
       sampled++;
     }
   }
 
   return {
     funds: codes.length,
-    valued: valuations.length,
+    valued: valuations.length - precisionCounts.NONE,
+    precisionCounts,
+    structuralNone,
+    missingInputNone: missingInputs.length,
+    missingInputs,
     sampled,
     provider: quoteResult.provider,
     delayed: quoteResult.delayed,
+    quoteChainFailure,
     failures,
   };
 }

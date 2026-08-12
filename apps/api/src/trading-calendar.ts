@@ -14,6 +14,8 @@ export interface TradingDayStatus {
   date: string;
   available: boolean;
   isTradingDay: boolean;
+  coversUntil: string | null;
+  remainingTradingDays: number;
 }
 
 export interface TradingCalendarInfo {
@@ -63,13 +65,17 @@ export async function getTradingCalendar(env: Env): Promise<TradingCalendar | nu
   }
 }
 
-export async function tradingCalendarInfo(env: Env): Promise<TradingCalendarInfo> {
+export async function tradingCalendarInfo(
+  env: Env,
+  now = Date.now(),
+): Promise<TradingCalendarInfo> {
   const calendar = await getTradingCalendar(env);
+  const coversUntil = calendar?.tradingDays.at(-1) ?? null;
   return {
-    available: calendar !== null,
+    available: calendar !== null && coversUntil !== null && coversUntil >= beijingDate(now),
     generatedAt: calendar?.generatedAt ?? null,
     days: calendar?.tradingDays.length ?? 0,
-    coversUntil: calendar?.tradingDays.at(-1) ?? null,
+    coversUntil,
   };
 }
 
@@ -79,9 +85,15 @@ export async function tradingDayStatus(
 ): Promise<TradingDayStatus> {
   const date = beijingDate(scheduledTime);
   const calendar = await getTradingCalendar(env);
+  const coversUntil = calendar?.tradingDays.at(-1) ?? null;
+  const coversDate = coversUntil !== null && coversUntil >= date;
   return {
     date,
-    available: calendar !== null,
-    isTradingDay: calendar?.tradingDays.includes(date) ?? false,
+    available: calendar !== null && coversDate,
+    isTradingDay: coversDate && (calendar?.tradingDays.includes(date) ?? false),
+    coversUntil,
+    remainingTradingDays: coversDate
+      ? calendar!.tradingDays.filter((tradingDay) => tradingDay >= date).length
+      : 0,
   };
 }

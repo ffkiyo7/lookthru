@@ -19,7 +19,8 @@
     "cf:config": "node scripts/gen-wrangler.mjs",
     "deploy": "npm run build && npm run cf:config && wrangler deploy -c .wrangler.generated.toml",
     "db:migrate:local": "npm run cf:config && wrangler d1 migrations apply lookthru --local -c .wrangler.generated.toml",
-    "db:migrate": "npm run cf:config && wrangler d1 migrations apply lookthru --remote -c .wrangler.generated.toml"
+    "db:migrate": "npm run cf:config && wrangler d1 migrations apply lookthru --remote -c .wrangler.generated.toml",
+    "notify:seed:local": "node scripts/seed-local-notify.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260804.1",

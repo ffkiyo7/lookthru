@@ -13,6 +13,7 @@ import {
   stockCodeToSecid,
 } from '../apps/api/src/sources';
 import { fetchNavBatch } from '../apps/api/src/sources/sina';
+import { isExchangeTradedCode, isPassiveIndexFund } from '../packages/shared/src';
 
 /** 招商中证白酒指数(LOF)A —— 场内 LOF，重仓集中，适合当基准样本 */
 const SAMPLE = '161725';
@@ -162,6 +163,19 @@ describe('东财 搜索建议', () => {
 describe('蛋卷 业绩基准兜底', () => {
   liveIt('从通用候选表中唯一匹配场外指数基金的跟踪指数', async () => {
     await expect(fetchFundBenchmark('000961')).resolves.toEqual({
+      secid: '1.000300',
+      name: '沪深300指数',
+      weight: 95,
+    });
+  });
+
+  liveIt('第 11 只样本确为场外非联接被动指数且基准权重不少于 90%', async () => {
+    const hit = (await searchFunds('050002')).find((candidate) => candidate.code === '050002');
+    expect(hit).toBeDefined();
+    expect(isPassiveIndexFund(hit!.type, hit!.name)).toBe(true);
+    expect(isExchangeTradedCode(hit!.code)).toBe(false);
+    expect(hit!.name).not.toContain('联接');
+    await expect(fetchFundBenchmark('050002')).resolves.toEqual({
       secid: '1.000300',
       name: '沪深300指数',
       weight: 95,

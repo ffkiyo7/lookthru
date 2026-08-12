@@ -1,36 +1,17 @@
 import type { LatestOfficialNav } from '@lookthru/shared';
-import { cachedJson } from '../cache';
+import { getFundMeta, type FundMeta } from '../fund-meta';
 import { searchFunds, type FundSearchHit } from '../sources/eastmoney';
 import { fetchNavBatch, type SinaNav } from '../sources/sina';
 import type { Env } from '../env';
 import { listValuationFundCodes } from '../valuation/universe';
 
 const DB_BATCH_ROWS = 400;
-const FUND_META_TTL_SECONDS = 6 * 60 * 60;
 const LATEST_NAV_TTL_SECONDS = 60 * 60;
-
-interface FundMeta {
-  code: string;
-  isMoneyFund: boolean;
-}
 
 export interface OfficialNavSyncResult {
   requested: number;
   stored: number;
   skipped: string[];
-}
-
-async function loadFundMeta(env: Env, code: string): Promise<FundMeta | null> {
-  return cachedJson<FundMeta | null>(
-    env.CACHE,
-    `fundmeta:${code}`,
-    FUND_META_TTL_SECONDS,
-    async () => {
-      const hits: FundSearchHit[] = await searchFunds(code);
-      const hit = hits.find((item) => item.code === code);
-      return hit ? { code: hit.code, isMoneyFund: hit.isMoneyFund } : null;
-    },
-  );
 }
 
 export async function syncOfficialNavs(env: Env): Promise<OfficialNavSyncResult> {
@@ -42,7 +23,7 @@ export async function syncOfficialNavs(env: Env): Promise<OfficialNavSyncResult>
   const skipped: string[] = [];
   for (const code of codes) {
     try {
-      const meta = await loadFundMeta(env, code);
+      const meta = await getFundMeta(env, code);
       if (meta) metas.push(meta);
       else skipped.push(code);
     } catch (error) {

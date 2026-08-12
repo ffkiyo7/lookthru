@@ -1,7 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { gunzipSync } from 'node:zlib';
 import { describe, expect, it, vi } from 'vitest';
 import {
   beijingDate,
@@ -97,25 +98,28 @@ describe('交易日历', () => {
 
   it('暴露可观测的日历摘要', async () => {
     const values = new Map<string, string>();
-    const info = await tradingCalendarInfo({
-      CACHE: {
-        get: async (key: string) => {
-          const value = values.get(key);
-          return value === undefined ? null : JSON.parse(value);
+    const info = await tradingCalendarInfo(
+      {
+        CACHE: {
+          get: async (key: string) => {
+            const value = values.get(key);
+            return value === undefined ? null : JSON.parse(value);
+          },
+          put: async (key: string, value: string) => {
+            values.set(key, value);
+          },
         },
-        put: async (key: string, value: string) => {
-          values.set(key, value);
-        },
-      },
-      ARCHIVE: {
-        get: async () => ({
-          json: async () => ({
-            generatedAt: '2026-08-11T00:00:00Z',
-            tradingDays: ['2026-08-11', '2026-08-12'],
+        ARCHIVE: {
+          get: async () => ({
+            json: async () => ({
+              generatedAt: '2026-08-11T00:00:00Z',
+              tradingDays: ['2026-08-11', '2026-08-12'],
+            }),
           }),
-        }),
-      },
-    } as never);
+        },
+      } as never,
+      Date.parse('2026-08-12T00:00:00Z'),
+    );
 
     expect(info).toEqual({
       available: true,
@@ -147,13 +151,13 @@ describe('交易日历', () => {
       },
     } as never;
 
-    await expect(tradingCalendarInfo(env)).resolves.toEqual({
+    await expect(tradingCalendarInfo(env, Date.parse('2026-08-12T00:00:00Z'))).resolves.toEqual({
       available: false,
       generatedAt: null,
       days: 0,
       coversUntil: null,
     });
-    await expect(tradingCalendarInfo(env)).resolves.toEqual({
+    await expect(tradingCalendarInfo(env, Date.parse('2026-08-12T00:00:00Z'))).resolves.toEqual({
       available: false,
       generatedAt: null,
       days: 0,
@@ -161,5 +165,169 @@ describe('交易日历', () => {
     });
     expect(r2Reads).toBe(1);
     warn.mockRestore();
+  });
+});
+
+describe('R2 数据归档 pipelines', () => {
+  it('全量基金列表通过全量校验后才写文件', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'lookthru-funds-'));
+    const sourcePath = join(tempDir, 'fundcode_search.js');
+    const outputPath = join(tempDir, 'meta', 'fundlist.json');
+    const rows = Array.from({ length: 10_000 }, (_, index) => {
+      const code = String(index).padStart(6, '0');
+      return [code, `PY${index}`, `基金${index}`, '混合型', `PINYIN${index}`];
+    });
+    try {
+      writeFileSync(sourcePath, `var r = ${JSON.stringify(rows)};`, 'utf8');
+      const valid = spawnSync(
+        'python3',
+        [
+          new URL('../pipelines/fund_list.py', import.meta.url).pathname,
+          '--source-file',
+          sourcePath,
+          '--output',
+          outputPath,
+        ],
+        { encoding: 'utf8' },
+      );
+      expect(valid.status, valid.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(outputPath, 'utf8')).funds).toHaveLength(10_000);
+
+      const invalidOutput = join(tempDir, 'invalid', 'fundlist.json');
+      writeFileSync(sourcePath, 'var r = [["000001","HX","华夏成长","混合型","HXCZ"]];', 'utf8');
+      const invalid = spawnSync(
+        'python3',
+        [
+          new URL('../pipelines/fund_list.py', import.meta.url).pathname,
+          '--source-file',
+          sourcePath,
+          '--output',
+          invalidOutput,
+        ],
+        { encoding: 'utf8' },
+      );
+      expect(invalid.status).toBe(1);
+      expect(invalid.stderr).toContain('低于下限');
+      expect(existsSync(invalidOutput)).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('净值历史缺页时整批失败且不产出压缩文件', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'lookthru-nav-'));
+    const sourcePath = join(tempDir, 'nav.json');
+    const outputDir = join(tempDir, 'out');
+    const row = { FSRQ: '2026-08-12', DWJZ: '1.2345', LJJZ: '2.3456', JZZZL: '0.12' };
+    try {
+      writeFileSync(sourcePath, JSON.stringify({ Data: { LSJZList: [row] }, TotalCount: 1 }), 'utf8');
+      const valid = spawnSync(
+        'python3',
+        [
+          new URL('../pipelines/nav_history.py', import.meta.url).pathname,
+          '--codes',
+          '000001',
+          '--source-file',
+          `000001=${sourcePath}`,
+          '--output-dir',
+          outputDir,
+        ],
+        { encoding: 'utf8' },
+      );
+      expect(valid.status, valid.stderr).toBe(0);
+      const archivePath = join(outputDir, 'nav', '000001.json.gz');
+      expect(JSON.parse(gunzipSync(readFileSync(archivePath)).toString('utf8'))).toMatchObject({
+        fundCode: '000001',
+        navHistory: [{ date: '2026-08-12', unitNav: 1.2345 }],
+      });
+
+      const invalidDir = join(tempDir, 'invalid');
+      writeFileSync(sourcePath, JSON.stringify({ Data: { LSJZList: [row] }, TotalCount: 2 }), 'utf8');
+      const invalid = spawnSync(
+        'python3',
+        [
+          new URL('../pipelines/nav_history.py', import.meta.url).pathname,
+          '--codes',
+          '000001',
+          '--source-file',
+          `000001=${sourcePath}`,
+          '--output-dir',
+          invalidDir,
+        ],
+        { encoding: 'utf8' },
+      );
+      expect(invalid.status).toBe(1);
+      expect(invalid.stderr).toContain('与 TotalCount 2 不符');
+      expect(existsSync(join(invalidDir, 'nav', '000001.json.gz'))).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('持仓明细为空时整批失败且不产出文件', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'lookthru-holdings-'));
+    const sourcePath = join(tempDir, 'holdings.json');
+    const outputDir = join(tempDir, 'out');
+    const stock = {
+      GPDM: '600519',
+      GPJC: '贵州茅台',
+      JZBL: '12.34',
+      NEWTEXCH: '1',
+      INDEXCODE: 'BK0477',
+      INDEXNAME: '食品饮料',
+    };
+    try {
+      writeFileSync(
+        sourcePath,
+        JSON.stringify({ Datas: { fundStocks: [stock] }, Expansion: '2026-06-30' }),
+        'utf8',
+      );
+      const valid = spawnSync(
+        'python3',
+        [
+          new URL('../pipelines/fund_holdings.py', import.meta.url).pathname,
+          '--codes',
+          '000001',
+          '--source-file',
+          `000001=${sourcePath}`,
+          '--output-dir',
+          outputDir,
+        ],
+        { encoding: 'utf8' },
+      );
+      expect(valid.status, valid.stderr).toBe(0);
+      expect(
+        JSON.parse(readFileSync(join(outputDir, 'holdings', '000001', '2026-06-30.json'), 'utf8')),
+      ).toMatchObject({ fundCode: '000001', coverageWeight: 12.34 });
+      expect(
+        JSON.parse(readFileSync(join(outputDir, 'holdings', '000001', 'latest.json'), 'utf8')),
+      ).toMatchObject({ fundCode: '000001', reportDate: '2026-06-30' });
+
+      const invalidDir = join(tempDir, 'invalid');
+      writeFileSync(
+        sourcePath,
+        JSON.stringify({ Datas: { fundStocks: [] }, Expansion: '2026-06-30' }),
+        'utf8',
+      );
+      const invalid = spawnSync(
+        'python3',
+        [
+          new URL('../pipelines/fund_holdings.py', import.meta.url).pathname,
+          '--codes',
+          '000001',
+          '--source-file',
+          `000001=${sourcePath}`,
+          '--output-dir',
+          invalidDir,
+        ],
+        { encoding: 'utf8' },
+      );
+      expect(invalid.status).toBe(1);
+      expect(invalid.stderr).toContain('没有股票明细');
+      expect(existsSync(join(invalidDir, 'holdings', '000001', 'latest.json'))).toBe(false);
+      expect(existsSync(join(invalidDir, 'holdings', '000001', '2026-06-30.json'))).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
