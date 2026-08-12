@@ -1,27 +1,37 @@
 import { Link } from 'react-router-dom';
-import type { Position } from '@lookthru/shared';
+import type { LatestOfficialNav, Position } from '@lookthru/shared';
+import { useQuery } from '@tanstack/react-query';
 import { Change, Money } from '../components/Money';
 import { PrecisionBadge, PrecisionLegend } from '../components/PrecisionBadge';
-import { EmptyPortfolio, FreshnessLine, PortfolioSkeleton } from '../components/states';
+import { EmptyPortfolio, ErrorState, FreshnessLine, PortfolioSkeleton } from '../components/states';
 import { Card, IconCircle, WarnBar } from '../components/ui';
+import { fetchPositions } from '../lib/api';
 import { formatNav, formatShares } from '../lib/format';
+import { positionPresentation, summarizePositions } from '../lib/portfolio';
 import { usePrefs } from '../lib/prefs';
 import { previewState } from '../lib/preview';
-import { MOCK_POSITIONS, MOCK_UPDATED_AT, summarize } from '../lib/mock';
 
 export function Portfolio() {
-  const { updown } = usePrefs();
+  const prefs = usePrefs();
+  const { updown } = prefs;
 
   // ── 数据接入点 ─────────────────────────────────────────────────────────
-  // 接后端时把这四行换成 useQuery，下面的分支不用动：
-  //   const { data = [], isPending, isRefetchError, dataUpdatedAt, refetch } = useQuery(...)
-  // fixture 按 @lookthru/shared 的真实类型构造，替换数据源即可。
   const preview = previewState();
-  const positions: Position[] = preview === 'empty' ? [] : MOCK_POSITIONS;
-  const loading: boolean = preview === 'loading';
-  const failing: boolean = preview === 'failing';
+  const query = useQuery({
+    queryKey: ['positions'],
+    queryFn: fetchPositions,
+    refetchInterval: prefs.freq === '1m' ? 60_000 : prefs.freq === '5m' ? 300_000 : false,
+  });
+  const positions: DisplayPosition[] = preview === 'empty' ? [] : (query.data?.positions ?? []);
+  const loading = preview === 'loading' || (preview === null && query.isPending);
+  const failing = preview === 'failing' || query.isRefetchError;
   const updatedAt: number | null =
-    preview === 'stale' || preview === 'failing' ? Date.now() - 23 * 60_000 : MOCK_UPDATED_AT;
+    preview === 'stale' || preview === 'failing'
+      ? Date.now() - 23 * 60_000
+      : query.data?.updatedAt
+        ? Date.parse(query.data.updatedAt)
+        : null;
+  const coldError = preview === 'error' || (query.isError && query.data === undefined);
   // ──────────────────────────────────────────────────────────────────────
 
   const header = (
@@ -63,6 +73,15 @@ export function Portfolio() {
     );
   }
 
+  if (coldError) {
+    return (
+      <>
+        {header}
+        <ErrorState onRetry={() => void query.refetch()} />
+      </>
+    );
+  }
+
   if (positions.length === 0) {
     return (
       <>
@@ -78,8 +97,7 @@ export function Portfolio() {
       header={header}
       failing={failing}
       updatedAt={updatedAt}
-      // 接后端时换成 useQuery 的 refetch。失败态没有重试出口的话，用户只能干等。
-      onRetry={preview ? () => location.reload() : undefined}
+      onRetry={() => void query.refetch()}
     />
   );
 }
@@ -91,13 +109,13 @@ function Loaded({
   updatedAt,
   onRetry,
 }: {
-  positions: Position[];
+  positions: DisplayPosition[];
   header: React.ReactNode;
   failing: boolean;
   updatedAt: number | null;
   onRetry?: () => void;
 }) {
-  const s = summarize(positions);
+  const s = summarizePositions(positions);
 
   return (
     <>
@@ -124,7 +142,7 @@ function Loaded({
 
         {s.unestimatedCount > 0 && (
           <div className="mt-2 text-[11px] text-ink-faintest">
-            其中 {s.unestimatedCount} 只不提供盘中估算，未计入今日收益
+            其中 {s.unestimatedCount} 只暂无盘中估算，未计入今日收益
           </div>
         )}
       </div>
@@ -156,9 +174,16 @@ function SummaryTile({ label, amount, pct }: { label: string; amount: number; pc
   );
 }
 
-function PositionCard({ position: p }: { position: Position }) {
+type DisplayPosition = Position & { officialValue: LatestOfficialNav };
+
+function PositionCard({ position: p }: { position: DisplayPosition }) {
   const v = p.valuation;
-  const estimable = v !== null && v.precision !== 'NONE' && v.estNav !== null;
+  const presented = positionPresentation(p);
+  const officialLabel = p.officialValue.valueKind === 'TEN_THOUSAND_YIELD' ? '万份收益' : '官方净值';
+  const officialValue =
+    p.officialValue.valueKind === 'TEN_THOUSAND_YIELD'
+      ? p.officialValue.tenThousandYield
+      : p.officialValue.unitNav;
 
   return (
     <Link to={`/fund/${p.fundCode}`} className="block">
@@ -172,19 +197,19 @@ function PositionCard({ position: p }: { position: Position }) {
         </div>
 
         {/* 估算值用斜体+灰，官方净值用正常字重 —— 两个「真相」必须视觉可分 */}
-        {estimable ? (
+        {presented.estimable ? (
           <div className="flex items-baseline gap-2.5">
             <span className="text-xs text-ink-faintest">估算净值</span>
             <span className="text-[21px] font-semibold italic text-[#aeb2ba]">
-              {formatNav(v.estNav!)}
+              {formatNav(v!.estNav!)}
             </span>
-            <Change value={v.estChgPct} className="text-sm italic" />
+            <Change value={v!.estChgPct} className="text-sm italic" />
           </div>
         ) : (
           <div className="flex items-baseline gap-2.5">
-            <span className="text-xs text-ink-faintest">官方净值</span>
+            <span className="text-xs text-ink-faintest">{officialLabel}</span>
             <span className="text-[21px] font-semibold text-[#eceef1]">
-              {formatNav(v?.prevNav ?? 0)}
+              {formatNav(officialValue)}
             </span>
             <span className="rounded-md bg-white/5 px-[7px] py-0.5 text-[11px] text-ink-faint">
               昨日确认
@@ -203,14 +228,14 @@ function PositionCard({ position: p }: { position: Position }) {
             <span className="font-medium text-ink-soft">{formatShares(p.shares)}</span>
           </Cell>
           <Cell label="今日收益">
-            {p.dayReturn === null ? (
+            {presented.dayReturn === null ? (
               <span className="text-ink-faintest">——</span>
             ) : (
-              <Money value={p.dayReturn} sign colored />
+              <Money value={presented.dayReturn} sign colored />
             )}
           </Cell>
           <Cell label="持有收益">
-            <Money value={p.holdingReturn} sign colored />
+            <Money value={presented.holdingReturn} sign colored />
           </Cell>
         </div>
       </Card>

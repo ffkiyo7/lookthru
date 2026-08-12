@@ -6,6 +6,7 @@ import type { Transaction } from '../packages/shared/src';
 import { aggregateXRay } from '../apps/api/src/xray/service';
 import { heldDaysByFund } from '../apps/api/src/xray/loader';
 import { computeDailyReturns } from '../apps/api/src/returns';
+import { summarizePositions } from '../apps/web/src/lib/portfolio';
 
 const base = {
   fundCode: '000001',
@@ -180,6 +181,68 @@ describe('流水推导持仓', () => {
       { fundCode: '000001', shares: 75, costTotal: 75, costPerShare: 1 },
       { fundCode: '000002', shares: 50, costTotal: 76, costPerShare: 1.52 },
     ]);
+  });
+});
+
+describe('前端持仓汇总', () => {
+  it('只从真实持仓推导汇总，并明确统计不可估基金', () => {
+    const positions = [
+      {
+        fundCode: '000001',
+        fundName: '基金甲',
+        shares: 100,
+        costTotal: 90,
+        costPerShare: 0.9,
+        marketValue: 100,
+        holdingReturn: 10,
+        holdingReturnPct: 100 / 9,
+        dayReturn: 2,
+        valuation: {
+          fundCode: '000001',
+          estNav: 1.05,
+          estChgPct: 5,
+          precision: 'MEDIUM' as const,
+          prevNav: 1,
+          estTime: '2026-08-13T06:55:00.000Z',
+          basis: {
+            reportDate: '2026-06-30',
+            staleDays: 44,
+            coverageWeight: 55,
+            note: '测试估算',
+          },
+        },
+      },
+      {
+        fundCode: '217022',
+        fundName: '债券基金',
+        shares: 100,
+        costTotal: 100,
+        costPerShare: 1,
+        marketValue: 99,
+        holdingReturn: -1,
+        holdingReturnPct: -1,
+        dayReturn: null,
+        valuation: {
+          fundCode: '217022',
+          estNav: null,
+          estChgPct: null,
+          precision: 'NONE' as const,
+          prevNav: 0.99,
+          estTime: '2026-08-12T06:55:00.000Z',
+          basis: { reportDate: null, staleDays: null, coverageWeight: null, note: '债基不可估' },
+        },
+      },
+    ];
+
+    const summary = summarizePositions(positions);
+    expect(summary).toMatchObject({
+      marketValue: 204,
+      holdingReturn: 14,
+      holdingReturnPct: (14 / 190) * 100,
+      unestimatedCount: 1,
+    });
+    expect(summary.dayReturn).toBeCloseTo(5);
+    expect(summary.dayReturnPct).toBeCloseTo((5 / 199) * 100);
   });
 });
 

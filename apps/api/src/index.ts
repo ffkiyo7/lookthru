@@ -24,6 +24,7 @@ import {
 } from './data/transactions';
 import {
   deleteNotifyBinding,
+  getNotifyBinding,
   listNotifyBindingKinds,
   upsertNotifyBinding,
 } from './data/notify';
@@ -32,7 +33,8 @@ import { getCachedHoldings } from './fund-holdings';
 import { PASS_THRESHOLD, probeStats, runProbe } from './probe';
 import { loadPositionSnapshot, PositionDataUnavailableError } from './positions';
 import { getCachedQuotes, type CachedQuoteResult } from './quote-cache';
-import { validateDiscordWebhookUrl } from './notify/discord';
+import { DiscordNotifier, validateDiscordWebhookUrl } from './notify/discord';
+import { buildDailyBrief } from './notify/jobs';
 import { getDailyReturns } from './returns';
 import { consumeKvRateLimit } from './rate-limit';
 import { getFundSearchChanges } from './search-changes';
@@ -436,6 +438,31 @@ app.delete('/api/notify-bindings/:kind', async (c) => {
   const deleted = await deleteNotifyBinding(c.env.DB, c.get('userId'), kind.data);
   if (!deleted) return c.json({ error: 'binding not found' }, 404);
   return c.body(null, 204);
+});
+
+app.post('/api/notify-bindings/:kind/test', async (c) => {
+  const kind = NotifyKindSchema.safeParse(c.req.param('kind'));
+  if (!kind.success) return c.json({ error: 'invalid binding kind' }, 400);
+  const binding = await getNotifyBinding(c.env, c.get('userId'), kind.data);
+  if (!binding) return c.json({ error: 'binding not found' }, 404);
+
+  const notifier = new DiscordNotifier();
+  const date = beijingDate(Date.now());
+  const result =
+    kind.data === 'DAILY'
+      ? await notifier.send(binding, await buildDailyBrief(c.env, binding, date))
+      : await notifier.sendAlert(binding, {
+          date,
+          title: '通知链路测试',
+          description: '设置页测试成功：加密读取、Worker 出口与 Discord webhook 均可用。',
+        });
+  if (!result.ok) {
+    console.error(
+      `[notify] 设置页测试失败 user=${c.get('userId')} kind=${kind.data} status=${result.status ?? 'network'} error=${result.error ?? 'unknown'}`,
+    );
+    return c.json({ error: `Discord 发送失败：${result.error ?? '未知错误'}` }, 502);
+  }
+  return c.json({ kind: kind.data, delivered: true, status: result.status });
 });
 
 app.onError((err, c) => {

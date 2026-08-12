@@ -99,6 +99,21 @@ export async function listNotifyBindings(
   return Promise.all(results.map((row) => decryptRow(env, row)));
 }
 
+export async function getNotifyBinding(
+  env: Env,
+  userId: string,
+  kind: NotifyKind,
+): Promise<NotifyBinding | null> {
+  const row = await env.DB.prepare(
+    `SELECT id, user_id, kind, provider, encryption_version, webhook_iv, webhook_ciphertext
+     FROM notify_bindings
+     WHERE user_id = ? AND kind = ?`,
+  )
+    .bind(userId, kind)
+    .first<NotifyBindingRow>();
+  return row ? decryptRow(env, row) : null;
+}
+
 export async function deleteNotifyBinding(
   db: D1Database,
   userId: string,

@@ -1,10 +1,39 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Change, Money } from '../components/Money';
 import { Donut } from '../components/charts';
-import { EmptyXRay, XRaySkeleton } from '../components/states';
-import { Card } from '../components/ui';
-import { MOCK_EXPOSURE, MOCK_SECTORS, MOCK_XRAY_META, type ExposureRow } from '../lib/mock';
+import { EmptyXRay, ErrorState, FreshnessLine, XRaySkeleton } from '../components/states';
+import { Card, WarnBar } from '../components/ui';
+import { fetchXRay, type XRayResponse } from '../lib/api';
 import { previewState } from '../lib/preview';
+
+type ExposureRow = XRayResponse['exposures'][number];
+
+const SECTOR_COLORS = [
+  'var(--color-sector-1)',
+  'var(--color-sector-2)',
+  'var(--color-sector-3)',
+  'var(--color-sector-4)',
+  'var(--color-sector-5)',
+];
+
+function sectorSegments(sectors: XRayResponse['sectors']) {
+  const visible = sectors.length <= 5
+    ? sectors
+    : [
+        ...sectors.slice(0, 4),
+        {
+          name: '其他',
+          pct: sectors.slice(4).reduce((sum, sector) => sum + sector.pct, 0),
+          value: sectors.slice(4).reduce((sum, sector) => sum + sector.value, 0),
+          fundCount: Math.max(...sectors.slice(4).map((sector) => sector.fundCount)),
+        },
+      ];
+  return visible.map((sector, index) => ({
+    ...sector,
+    color: SECTOR_COLORS[index]!,
+  }));
+}
 
 /**
  * 持仓穿透 —— 本产品的杀手锏。
@@ -15,10 +44,17 @@ export function XRay() {
   // ── 数据接入点 ─────────────────────────────────────────────────────────
   // 穿透依赖持仓：没有持仓就没有可穿透的东西，走空态而不是空列表。
   const preview = previewState();
-  const exposure = preview === 'empty' ? [] : MOCK_EXPOSURE;
-  const sectors = MOCK_SECTORS;
-  const meta = MOCK_XRAY_META;
-  const loading: boolean = preview === 'loading';
+  const query = useQuery({ queryKey: ['xray'], queryFn: fetchXRay, refetchInterval: 60_000 });
+  const exposure = preview === 'empty' ? [] : (query.data?.exposures ?? []);
+  const sectors = sectorSegments(query.data?.sectors ?? []);
+  const meta = query.data?.meta;
+  const loading = preview === 'loading' || (preview === null && query.isPending);
+  const coldError = preview === 'error' || (query.isError && query.data === undefined);
+  const failing = preview === 'failing' || query.isRefetchError;
+  const updatedAt =
+    preview === 'stale' || preview === 'failing'
+      ? Date.now() - 23 * 60_000
+      : (query.data?.updatedAt ?? null);
   // ──────────────────────────────────────────────────────────────────────
 
   const max = exposure[0]?.pct ?? 1;
@@ -41,7 +77,16 @@ export function XRay() {
     );
   }
 
-  if (exposure.length === 0) {
+  if (coldError) {
+    return (
+      <>
+        {header}
+        <ErrorState onRetry={() => void query.refetch()} />
+      </>
+    );
+  }
+
+  if (exposure.length === 0 || !meta || !query.data) {
     return (
       <>
         {header}
@@ -71,9 +116,40 @@ export function XRay() {
         <div className="text-xs leading-relaxed text-[#d8c9a8]">
           穿透你持有的 <b className="text-[#f0d5a8]">{meta.fundCount} 只基金</b>，合计覆盖{' '}
           <b className="text-[#f0d5a8]">{meta.coveragePct}%</b> 的净值。基于各基金{' '}
-          {meta.reportQuarter} 季报，<b className="text-warn">数据已过期 {meta.staleDays} 天</b>。
+          {meta.reportQuarter ?? '未知报告期'} 数据，
+          <b className="text-warn">
+            {meta.staleDays === null ? '报告期年龄未知' : `最旧报告已过 ${meta.staleDays} 天`}
+          </b>
+          。市值口径：{meta.valueBasis === 'ESTIMATED' ? '全部估算' : meta.valueBasis === 'OFFICIAL' ? '全部官方' : '估算与官方混合'}。
         </div>
       </div>
+
+      <FreshnessLine
+        at={updatedAt}
+        failing={failing}
+        onRetry={() => void query.refetch()}
+        liveNote="穿透金额随持仓市值更新"
+      />
+
+      {(query.data.holdingsStaleFundCount > 0 ||
+        query.data.quoteDelayed ||
+        query.data.quoteStaleSecids.length > 0 ||
+        query.data.quoteUnavailableSecids.length > 0) && (
+        <div className="mt-3">
+          <WarnBar>
+            {query.data.holdingsStaleFundCount > 0
+              ? `${query.data.holdingsStaleFundCount} 只基金使用陈旧持仓；`
+              : ''}
+            {query.data.quoteDelayed ? '行情为延时源；' : ''}
+            {query.data.quoteStaleSecids.length > 0
+              ? `${query.data.quoteStaleSecids.length} 只股票使用旧行情；`
+              : ''}
+            {query.data.quoteUnavailableSecids.length > 0
+              ? `${query.data.quoteUnavailableSecids.length} 只股票行情不可用`
+              : ''}
+          </WarnBar>
+        </div>
+      )}
 
       <div className="flex items-baseline justify-between px-0.5 pt-6 pb-1">
         <div className="text-[15px] font-semibold">真实股票敞口</div>
@@ -90,28 +166,30 @@ export function XRay() {
       </div>
 
       {/* 行业集中度 */}
-      <Card className="mt-5 px-4 py-[18px]" padded={false}>
-        <div className="mb-1.5 text-[15px] font-semibold">行业集中度</div>
-        <div className="flex items-center gap-[18px]">
-          <div className="relative size-[130px] shrink-0">
-            <Donut segments={sectors} />
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <div className="text-[11px] text-ink-muted">最大行业</div>
-              <div className="mt-px text-[12.5px] font-semibold text-ink">{sectors[0]!.name}</div>
-              <div className="text-base font-bold text-accent">{sectors[0]!.pct}%</div>
+      {sectors.length > 0 && (
+        <Card className="mt-5 px-4 py-[18px]" padded={false}>
+          <div className="mb-1.5 text-[15px] font-semibold">行业集中度</div>
+          <div className="flex items-center gap-[18px]">
+            <div className="relative size-[130px] shrink-0">
+              <Donut segments={sectors} />
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <div className="text-[11px] text-ink-muted">最大行业</div>
+                <div className="mt-px text-[12.5px] font-semibold text-ink">{sectors[0]!.name}</div>
+                <div className="text-base font-bold text-accent">{sectors[0]!.pct}%</div>
+              </div>
+            </div>
+            <div className="flex flex-1 flex-col gap-[11px]">
+              {sectors.map((s) => (
+                <div key={s.name} className="flex items-center gap-2.5">
+                  <span className="size-2.5 rounded-[3px]" style={{ background: s.color }} />
+                  <span className="flex-1 text-[12.5px] text-ink-body">{s.name}</span>
+                  <span className="text-[12.5px] font-semibold">{s.pct}%</span>
+                </div>
+              ))}
             </div>
           </div>
-          <div className="flex flex-1 flex-col gap-[11px]">
-            {sectors.map((s) => (
-              <div key={s.name} className="flex items-center gap-2.5">
-                <span className="size-2.5 rounded-[3px]" style={{ background: s.color }} />
-                <span className="flex-1 text-[12.5px] text-ink-body">{s.name}</span>
-                <span className="text-[12.5px] font-semibold">{s.pct}%</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </Card>
+        </Card>
+      )}
 
       {/* 集中度提示 —— 客观指标，不构成投资建议 */}
       <div className="mt-3.5 rounded-[18px] border border-line-card bg-[linear-gradient(158deg,#1c1f27,#131519)] p-4">
@@ -133,9 +211,10 @@ export function XRay() {
           <div className="text-[13.5px] font-semibold">集中度提示</div>
         </div>
         <div className="text-[13px] leading-relaxed text-[#c8ccd3]">
-          前 5 大重仓股占总资产 <b className="text-ink">{meta.top5Pct}%</b>，单一行业（
-          {sectors[0]!.name}）占 <b className="text-ink">{sectors[0]!.pct}%</b>。集中度
-          <b className="text-ink">高于</b>你持仓基金的平均水平。
+          前 5 大重仓股占总资产 <b className="text-ink">{meta.top5Pct}%</b>。已识别行业中，
+          <b className="text-ink">{query.data.facts.industryOverlap.overlappingIndustryCount}</b>{' '}
+          个行业被多只基金重复持有，相关敞口占{' '}
+          <b className="text-ink">{query.data.facts.industryOverlap.overlapPct}%</b>。
         </div>
         <div className="mt-3 border-t border-line-soft pt-[11px] text-[11px] text-ink-faintest">
           以上为客观指标，不构成投资建议

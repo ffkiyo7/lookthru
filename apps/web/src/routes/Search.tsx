@@ -3,8 +3,20 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Change } from '../components/Money';
 import { formatNav } from '../lib/format';
-import { HOT_KEYWORDS, MOCK_WATCHLIST } from '../lib/mock';
 import { searchFunds, shortType, type SearchHit } from '../lib/api';
+
+const HOT_KEYWORDS = [
+  '白酒',
+  '医药',
+  '新能源',
+  '半导体',
+  '沪深300',
+  '中概互联',
+  '黄金',
+  '红利低波',
+  '纳指ETF',
+  '军工',
+];
 
 export function Search() {
   const [input, setInput] = useState('');
@@ -129,31 +141,7 @@ function Hint({ children }: { children: ReactNode }) {
 function EmptyState({ onPick }: { onPick: (kw: string) => void }) {
   return (
     <>
-      <div className="mt-6 mb-1.5 px-0.5 text-[13px] font-semibold">我的自选</div>
-      <div>
-        {MOCK_WATCHLIST.map((f, i) => (
-          <Link
-            key={f.code}
-            to={`/fund/${f.code}`}
-            className={`flex items-center px-0.5 py-[13px] ${
-              i < MOCK_WATCHLIST.length - 1 ? 'border-b border-line-soft' : ''
-            }`}
-          >
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium">{f.name}</div>
-              <div className="mt-[3px] text-[11px] text-ink-dimmer">
-                {f.code} · {f.type}
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="text-[15px] font-semibold">{formatNav(f.nav)}</div>
-              <Change value={f.chgPct} className="mt-0.5 block text-xs" />
-            </div>
-          </Link>
-        ))}
-      </div>
-
-      <div className="mt-[26px] mb-3.5 px-0.5 text-[13px] font-semibold">热门基金</div>
+      <div className="mt-6 mb-3.5 px-0.5 text-[13px] font-semibold">热门搜索</div>
       <div className="flex flex-wrap gap-2.5">
         {HOT_KEYWORDS.map((k) => (
           <button
@@ -195,10 +183,10 @@ function ResultRow({ hit, keyword, last }: { hit: SearchHit; keyword: string; la
           </div>
         </div>
       )}
-      <button
-        type="button"
+      <Link
+        to={`/fund/${hit.code}`}
         className="flex size-[30px] shrink-0 items-center justify-center rounded-[9px] border border-accent/40 bg-accent/12 text-accent-soft"
-        aria-label="加入自选"
+        aria-label="查看并记录持仓"
       >
         <svg
           width="15"
@@ -211,7 +199,7 @@ function ResultRow({ hit, keyword, last }: { hit: SearchHit; keyword: string; la
           <line x1="12" y1="5" x2="12" y2="19" />
           <line x1="5" y1="12" x2="19" y2="12" />
         </svg>
-      </button>
+      </Link>
     </div>
   );
 }

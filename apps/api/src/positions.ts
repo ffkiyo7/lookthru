@@ -14,7 +14,7 @@ export class PositionDataUnavailableError extends Error {
 
 export interface PositionSnapshot {
   updatedAt: string | null;
-  positions: Position[];
+  positions: Array<Position & { officialValue: LatestOfficialNav }>;
 }
 
 function regularDayReturn(shares: number, nav: LatestOfficialNav): number | null {
@@ -75,7 +75,7 @@ export async function loadPositionSnapshot(env: Env, userId: string): Promise<Po
     const marketValue = officialMarketValue(derivedPosition.shares, nav);
     const holdingReturn = marketValue - derivedPosition.costTotal;
     const valuation = valuationMap.get(derivedPosition.fundCode) ?? null;
-    return Position.parse({
+    const position = Position.parse({
       fundCode: derivedPosition.fundCode,
       fundName: meta.name,
       shares: derivedPosition.shares,
@@ -88,6 +88,9 @@ export async function loadPositionSnapshot(env: Env, userId: string): Promise<Po
       dayReturn: positionDayReturn(derivedPosition.shares, nav),
       valuation,
     });
+    // Position 是前后端共享的持仓计算类型；官方值是本接口的展示上下文，
+    // 与估值同包返回，避免 UI 在估值缺失时把 0 伪装成官方净值。
+    return { ...position, officialValue: nav };
   });
 
   return {

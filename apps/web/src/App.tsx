@@ -8,6 +8,7 @@ import { Search } from './routes/Search';
 import { XRay } from './routes/XRay';
 import { Settings } from './routes/Settings';
 import { Probe } from './routes/Probe';
+import { RequireSession } from './routes/Auth';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -27,10 +28,14 @@ export function App() {
         <BrowserRouter>
           <Routes>
             <Route element={<AppShell />}>
-              <Route index element={<Portfolio />} />
               <Route path="search" element={<Search />} />
-              <Route path="xray" element={<XRay />} />
-              <Route path="settings" element={<Settings />} />
+            </Route>
+            <Route element={<RequireSession />}>
+              <Route element={<AppShell />}>
+                <Route index element={<Portfolio />} />
+                <Route path="xray" element={<XRay />} />
+                <Route path="settings" element={<Settings />} />
+              </Route>
             </Route>
             <Route path="/fund/:code" element={<FundDetail />} />
             {/* P0 判定面板，部署后用它看 24h 出口通过率 */}

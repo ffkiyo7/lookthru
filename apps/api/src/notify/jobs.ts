@@ -25,7 +25,7 @@ async function wasSent(env: Env, userId: string, date: string): Promise<boolean>
   return DailySuccess.safeParse(raw).success;
 }
 
-async function buildDailyBrief(
+export async function buildDailyBrief(
   env: Env,
   binding: NotifyBinding,
   date: string,

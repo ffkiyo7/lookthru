@@ -111,19 +111,3 @@ export function Donut({ segments, size = 130 }: { segments: DonutSegment[]; size
     </svg>
   );
 }
-
-/** 生成演示用净值序列。接真实数据后删除。 */
-export function genSeries(n: number, start: number, vol: number, drift: number, seed: number) {
-  let s = seed;
-  let v = start;
-  const out: number[] = [];
-  const rnd = () => {
-    s = (s * 9301 + 49297) % 233280;
-    return s / 233280;
-  };
-  for (let i = 0; i < n; i++) {
-    v = v * (1 + drift + (rnd() - 0.5) * vol);
-    out.push(v);
-  }
-  return out;
-}

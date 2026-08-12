@@ -174,7 +174,9 @@ function safeNetworkError(error: unknown, webhookUrl: string): string {
 
 export class DiscordNotifier implements Notifier {
   constructor(
-    private readonly fetcher: typeof fetch = fetch,
+    // Workers 原生 fetch 带宿主调用上下文；直接存成成员后 this.fetcher(...) 会变成非法调用。
+    // 包一层普通函数既保留生产上下文，也不影响测试注入。
+    private readonly fetcher: typeof fetch = (input, init) => fetch(input, init),
     private readonly sleep: (milliseconds: number) => Promise<void> = (milliseconds) =>
       new Promise((resolve) => setTimeout(resolve, milliseconds)),
   ) {}
