@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { assertNotAllUnreachable, liveIt } from './live-helpers';
 import {
   fetchFundList,
+  fetchFundBenchmark,
   fetchHoldings,
   fetchLatestNav,
   fetchNavHistory,
@@ -155,6 +156,16 @@ describe('东财 搜索建议', () => {
     expect(r.length).toBeGreaterThan(0);
     expect(r[0]!.code).toMatch(/^\d{6}$/);
     expect(r[0]!.name.length).toBeGreaterThan(0);
+  });
+});
+
+describe('蛋卷 业绩基准兜底', () => {
+  liveIt('从通用候选表中唯一匹配场外指数基金的跟踪指数', async () => {
+    await expect(fetchFundBenchmark('000961')).resolves.toEqual({
+      secid: '1.000300',
+      name: '沪深300指数',
+      weight: 95,
+    });
   });
 });
 

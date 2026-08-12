@@ -5,6 +5,7 @@ import type { Env } from './env';
 import { PASS_THRESHOLD, probeStats, runProbe } from './probe';
 import { fetchHoldings, fetchQuotesResilient, searchFunds } from './sources';
 import { tradingCalendarInfo } from './trading-calendar';
+import { getCachedValuations } from './valuation/service';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -60,6 +61,19 @@ app.get('/api/quotes', async (c) => {
     delayed: r.delayed,
     quotes: Object.fromEntries(r.quotes),
   });
+});
+
+app.get('/api/valuations', async (c) => {
+  const codes = [...new Set((c.req.query('codes') ?? '').split(',').filter(Boolean))];
+  if (codes.length === 0) return c.json({ error: 'missing codes' }, 400);
+  if (codes.length > 100) return c.json({ error: 'too many codes' }, 400);
+  if (codes.some((code) => !/^\d{6}$/.test(code))) return c.json({ error: 'bad code' }, 400);
+  const valuations = await getCachedValuations(c.env, codes);
+  const updatedAt = [...valuations.values()]
+    .map((valuation) => valuation.estTime)
+    .sort()
+    .at(-1) ?? null;
+  return c.json({ updatedAt, valuations: Object.fromEntries(valuations) });
 });
 
 app.onError((err, c) => {

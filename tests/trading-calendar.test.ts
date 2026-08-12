@@ -73,6 +73,23 @@ describe('交易日历', () => {
       expect(calendar?.tradingDays).not.toContain('2026-01-01');
       expect(calendar?.tradingDays).not.toContain('2026-01-02');
       expect(calendar?.tradingDays).not.toContain('2026-02-16');
+
+      const missingNextYear = spawnSync(
+        'python3',
+        [
+          new URL('../pipelines/trading_calendar.py', import.meta.url).pathname,
+          '--year',
+          '2026',
+          '--require-next-year',
+          '--notice-file',
+          `2026=${noticePath}`,
+          '--output',
+          join(tempDir, 'calendar', 'must-not-replace.json'),
+        ],
+        { encoding: 'utf8' },
+      );
+      expect(missingNextYear.status).toBe(1);
+      expect(missingNextYear.stderr).toContain('输入公告不含下一年 2027');
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -104,6 +121,7 @@ describe('交易日历', () => {
       available: true,
       generatedAt: '2026-08-11T00:00:00Z',
       days: 2,
+      coversUntil: '2026-08-12',
     });
   });
 
@@ -133,11 +151,13 @@ describe('交易日历', () => {
       available: false,
       generatedAt: null,
       days: 0,
+      coversUntil: null,
     });
     await expect(tradingCalendarInfo(env)).resolves.toEqual({
       available: false,
       generatedAt: null,
       days: 0,
+      coversUntil: null,
     });
     expect(r2Reads).toBe(1);
     warn.mockRestore();

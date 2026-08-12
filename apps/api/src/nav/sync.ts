@@ -1,9 +1,9 @@
 import type { LatestOfficialNav } from '@lookthru/shared';
 import { cachedJson } from '../cache';
-import { listActiveFundCodes } from '../data/transactions';
 import { searchFunds, type FundSearchHit } from '../sources/eastmoney';
 import { fetchNavBatch, type SinaNav } from '../sources/sina';
 import type { Env } from '../env';
+import { listValuationFundCodes } from '../valuation/universe';
 
 const DB_BATCH_ROWS = 400;
 const FUND_META_TTL_SECONDS = 6 * 60 * 60;
@@ -34,7 +34,7 @@ async function loadFundMeta(env: Env, code: string): Promise<FundMeta | null> {
 }
 
 export async function syncOfficialNavs(env: Env): Promise<OfficialNavSyncResult> {
-  const codes = await listActiveFundCodes(env.DB);
+  const codes = await listValuationFundCodes(env.DB);
   if (codes.length === 0) return { requested: 0, stored: 0, skipped: [] };
 
   // search 源自身有礼貌限流；这里按基金串行分类，避免瞬时并发绕过 ≤1 req/s 约束。

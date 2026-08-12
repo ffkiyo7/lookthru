@@ -13,6 +13,7 @@ import { fetchQuotesResilient } from './quotes';
 import { fetchText } from './http';
 
 export * from './eastmoney';
+export * from './danjuan';
 export * from './sina';
 export * from './tencent';
 export * from './yahoo';

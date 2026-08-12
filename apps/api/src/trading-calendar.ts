@@ -20,6 +20,7 @@ export interface TradingCalendarInfo {
   available: boolean;
   generatedAt: string | null;
   days: number;
+  coversUntil: string | null;
 }
 
 export function parseTradingCalendar(value: unknown): TradingCalendar | null {
@@ -68,6 +69,7 @@ export async function tradingCalendarInfo(env: Env): Promise<TradingCalendarInfo
     available: calendar !== null,
     generatedAt: calendar?.generatedAt ?? null,
     days: calendar?.tradingDays.length ?? 0,
+    coversUntil: calendar?.tradingDays.at(-1) ?? null,
   };
 }
 

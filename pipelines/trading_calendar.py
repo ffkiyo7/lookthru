@@ -233,11 +233,15 @@ def _load_notice_files(values: Sequence[str]) -> Dict[int, str]:
     return notices
 
 
-def _download_notices(start_year: int) -> Dict[int, str]:
+def _download_notices(start_year: int, require_next_year: bool) -> Dict[int, str]:
     list_html = _fetch_html(SSE_NOTICE_LIST_URL)
     links = _notice_links(list_html, SSE_NOTICE_LIST_URL)
     if start_year not in links:
         raise CalendarPipelineError(f"上交所列表页没有 {start_year} 年年度休市通知")
+    if require_next_year and start_year + 1 not in links:
+        raise CalendarPipelineError(
+            f"上交所列表页没有 {start_year + 1} 年年度休市通知，拒绝覆盖现有日历"
+        )
     years = [start_year]
     if start_year + 1 in links:
         years.append(start_year + 1)
@@ -253,6 +257,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--year", type=int, default=_beijing_year())
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
+        "--require-next-year",
+        action="store_true",
+        help="Fail unless the annual notice for YEAR + 1 is also available.",
+    )
+    parser.add_argument(
         "--notice-file",
         action="append",
         default=[],
@@ -265,10 +274,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         notices = (
             _load_notice_files(args.notice_file)
             if args.notice_file
-            else _download_notices(args.year)
+            else _download_notices(args.year, args.require_next_year)
         )
         if args.year not in notices:
             raise CalendarPipelineError(f"输入公告不含目标年份 {args.year}")
+        if args.require_next_year and args.year + 1 not in notices:
+            raise CalendarPipelineError(
+                f"输入公告不含下一年 {args.year + 1}，拒绝覆盖现有日历"
+            )
         calendar = build_calendar(notices)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(

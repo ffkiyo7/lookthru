@@ -2,6 +2,7 @@ import type { Env } from './env';
 import { syncOfficialNavs } from './nav/sync';
 import { runProbe } from './probe';
 import { tradingDayStatus } from './trading-calendar';
+import { prewarmValuationInputs, runValuationCycle } from './valuation/service';
 
 export const CRONS = {
   probe: '*/5 * * * *',
@@ -105,13 +106,40 @@ export async function runScheduledTask(
       console.log('[official-nav]', result);
       return;
     }
+    case 'PREWARM': {
+      const result = await prewarmValuationInputs(env);
+      console.log(
+        `[valuation] 预热完成 funds=${result.funds} updated=${result.updated} failed=${result.failures.length}`,
+      );
+      if (result.failures.length > 0) {
+        throw new AggregateError(
+          result.failures.map((failure) => failure.error),
+          `估值预热失败: ${result.failures.map((failure) => failure.code).join(',')}`,
+        );
+      }
+      return;
+    }
+    case 'VALUATION':
+    case 'CLOSE_SNAPSHOT': {
+      const result = await runValuationCycle(env, controller.scheduledTime);
+      console.log(
+        `[valuation] ${task} funds=${result.funds} valued=${result.valued} sampled=${result.sampled} provider=${result.provider ?? 'none'} delayed=${result.delayed} failed=${result.failures.length}`,
+      );
+      if (result.failures.length > 0) {
+        throw new AggregateError(
+          result.failures.map((failure) => failure.error),
+          `估值计算失败: ${result.failures.map((failure) => failure.code).join(',')}`,
+        );
+      }
+      return;
+    }
     case 'IDLE':
       return;
     case 'UNKNOWN':
       console.warn(`[cron] 未识别的触发表达式：${controller.cron}`);
       return;
     default:
-      // 第 0 步先把时刻表与精确分派固定下来；后续模块接到对应 case，不再改 cron 口径。
+      // DAILY_BRIEF 属于后续 Notifier；不能把未知任务吞成成功，已在 UNKNOWN 分支告警。
       console.log(`[cron] ${task} 尚未接入`);
   }
 }

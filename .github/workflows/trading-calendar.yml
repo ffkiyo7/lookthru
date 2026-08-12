@@ -20,7 +20,12 @@ jobs:
         with:
           python-version: '3.12'
       - name: 从上交所年度休市通知生成并全量校验
-        run: python3 pipelines/trading_calendar.py --output "$RUNNER_TEMP/calendar/trading_days.json"
+        env:
+          REQUIRE_NEXT_YEAR: ${{ github.event.schedule == '15 22 24 12 *' && '--require-next-year' || '' }}
+        run: >-
+          python3 pipelines/trading_calendar.py
+          --output "$RUNNER_TEMP/calendar/trading_days.json"
+          $REQUIRE_NEXT_YEAR
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
