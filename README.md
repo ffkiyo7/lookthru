@@ -24,21 +24,21 @@
 
 ## 现在做到哪了
 
-**P0（出口风险验证）正在采集 24h 数据**，Cron 每 5 分钟一次，判定面板在 `/probe`。
+**P0（出口风险验证）已通过**，Cron 仍每 5 分钟采样，判定面板在 `/probe`。
 
 整个架构押在一个假设上：Cloudflare Workers 从 CF 全球共享 IP 池出网，能否稳定抓取上游。出口地域不可控，云厂商 IP 被限速/封禁是真实风险。
 
 **这个风险已经部分兑现**：东财行情接口 `push2` 从 CF 出口稳定 502，但基金列表与档案接口正常 —— 不是整体封禁，只有行情这一条线。已改为四级降级链解决，**不需要动用「上游抓取全迁 GitHub Actions」的终极退路**。详见 [data-sources.md](docs/data-sources.md#-行情源必须走降级链)。
 
-前端 5 个页面已按 Claude Design 稿实现，搜索接了真实接口，其余走 fixture。估值引擎、穿透聚合、Notifier 三块尚未实现（**只有类型和 UI 壳**）。
+邀请码登录、持仓流水、盘中估值、持仓穿透和 Discord 日报/告警已经接通生产数据。持仓与穿透页保留 `?state=empty|loading|stale|failing`，只用于预览各状态，不会替代正常请求。
 
 | 路由 | 页面 | 数据 |
 |---|---|---|
-| `/` | 持仓总览 | fixture |
-| `/fund/:code` | 基金详情 | fixture |
+| `/` | 持仓总览 | 真实 |
+| `/fund/:code` | 基金详情 | 真实 |
 | `/search` | 基金搜索 | 真实 |
-| `/xray` | 持仓穿透 | fixture |
-| `/settings` | 设置 | 偏好真实 |
+| `/xray` | 持仓穿透 | 真实 |
+| `/settings` | 设置 | 偏好与加密通知绑定均真实 |
 | `/probe` | P0 判定面板 | 真实 |
 
 ---
@@ -59,6 +59,7 @@ npm run dev:web        # 另开终端，前端热更新 → :5173，/api 代理�
 
 ```bash
 npm run typecheck
+npm run test
 npm run test:live      # 打真实上游端点的契约测试
 ```
 
@@ -80,9 +81,12 @@ npx wrangler r2 bucket create lookthru-archive
 cp .wrangler-ids.example .wrangler-ids     # 填入上面两个 id
 
 npm run db:migrate
+npx wrangler secret put NOTIFY_KEY   # 32 字节 base64url AES-GCM 密钥；缺失时部署会失败
 npm run deploy
 curl -X POST https://<域名>/api/probe/run  # 立刻探一次，不必等 Cron
 ```
+
+部署后先由管理员把一次性邀请码的 SHA-256 哈希手工写入 D1；用户兑换后会拿到只显示一次的恢复码。Discord 日报与告警各用一个专用频道，在登录后的设置页分别保存和测试，webhook URL 只以 AES-GCM 密文存入 D1。
 
 > **需要 Workers Paid（$5/月）**。免费版每请求仅 10ms CPU，解析 3.1MB 基金列表必然超时。
 >

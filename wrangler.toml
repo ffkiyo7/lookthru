@@ -16,6 +16,11 @@ run_worker_first = ["/api/*"]
 [observability]
 enabled = true
 
+# webhook 只能以 AES-GCM 密文落 D1；缺密钥的版本必须在部署阶段失败，
+# 不能等到 21:00 第一次发日报时才暴露。
+[secrets]
+required = ["NOTIFY_KEY"]
+
 # Workers Paid（已订阅）：每次调用 30s CPU，不再是免费版的 10ms。
 # 显式写出来，免得以后照着旧约束做无谓的裁剪。
 [limits]

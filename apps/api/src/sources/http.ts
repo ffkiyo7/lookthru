@@ -38,22 +38,17 @@ export interface FetchResult {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const lastRequestStartedAt = new Map<string, number>();
-const originTails = new Map<string, Promise<void>>();
+const lastReservedStartAt = new Map<string, number>();
 
 async function waitForOriginSlot(url: string): Promise<void> {
   const origin = new URL(url).origin;
-  const previous = originTails.get(origin) ?? Promise.resolve();
-  const current = previous.catch(() => undefined).then(async () => {
-    const elapsed = Date.now() - (lastRequestStartedAt.get(origin) ?? 0);
-    const remainingMs = Math.max(0, 1_000 - elapsed);
-    const waitMs = remainingMs === 0 ? 0 : remainingMs + Math.random() * 150;
-    if (waitMs > 0) await sleep(waitMs);
-    lastRequestStartedAt.set(origin, Date.now());
-  });
-  originTails.set(origin, current);
-  await current;
-  if (originTails.get(origin) === current) originTails.delete(origin);
+  const now = Date.now();
+  const remainingMs = Math.max(0, (lastReservedStartAt.get(origin) ?? 0) + 1_000 - now);
+  const waitMs = remainingMs === 0 ? 0 : remainingMs + Math.random() * 150;
+  // 先同步预占时间槽，再等待；并发调用会看到已经预占的数字时间。
+  // 模块全局不能保存 Promise，否则另一个 Worker 请求可能等待前一请求创建的异步对象。
+  lastReservedStartAt.set(origin, now + waitMs);
+  if (waitMs > 0) await sleep(waitMs);
 }
 
 export async function fetchText(url: string, opts: FetchOptions): Promise<FetchResult> {

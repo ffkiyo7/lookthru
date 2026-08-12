@@ -489,4 +489,4 @@ export default {
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(runScheduledTask(event, env));
   },
-};
+} satisfies ExportedHandler<Env>;

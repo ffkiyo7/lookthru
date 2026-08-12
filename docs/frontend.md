@@ -200,14 +200,14 @@
 
 | 路由 | 页面 | 数据状态 |
 |---|---|---|
-| `/` | 持仓总览 | fixture |
-| `/fund/:code` | 基金详情 | fixture |
+| `/` | 持仓总览 | **真实接口** |
+| `/fund/:code` | 基金详情 | **真实接口** |
 | `/search` | 基金搜索 | **真实接口** |
-| `/xray` | 持仓穿透 | fixture |
-| `/settings` | 设置 | 本地偏好真实，推送绑定 fixture |
+| `/xray` | 持仓穿透 | **真实接口** |
+| `/settings` | 设置 | 本地偏好与推送绑定均为**真实接口** |
 | `/probe` | P0 出口探针判定面板 | 真实 |
 
-fixture 在 `lib/mock.ts`，**全部按 `@lookthru/shared` 的真实类型构造**，接后端时只换数据来源、不改组件。
+持仓与穿透页的 `?state=empty|loading|stale|failing` 只用于逐屏预览状态；正常访问始终读取后端。原 `lib/mock.ts` fixture 已删除，避免出现第二套数据真相源。
 
 ---
 

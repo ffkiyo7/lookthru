@@ -1,6 +1,6 @@
 # 进度与下一步
 
-更新于 2026-08-12。
+更新于 2026-08-13。
 
 ---
 
@@ -11,30 +11,28 @@
 | Phase | 内容 | 状态 |
 |---|---|---|
 | **P0** | 出口风险验证（阻塞性） | ✅ **通过**（30.9h，三端点 288/288 全 100%） |
-| P1 | 基金库 + 搜索 + 详情 + 手动持仓录入 + 官方净值收益 | 🟡 UI 全完成；数据层已部署（D1 + Cron + 净值落库 + KV），持仓/详情仍走 fixture |
-| P2 | 自建估值引擎 + 精度分级 + 盘中刷新 | ⚪ 类型与 UI 就位，**引擎未写** |
-| P3 | 收益可视化 | 🟡 净值曲线已实现，归因/日收益柱状未做 |
-| P4 | Notifier（飞书 → Telegram → Discord） | ⚪ 仅设置页 UI |
-| P5 | 持仓穿透 + 客观指标提示 | 🟡 UI 完成，**聚合算法未写** |
+| P1 | 基金库 + 搜索 + 详情 + 手动持仓录入 + 官方净值收益 | ✅ 邀请码鉴权、流水真相源、持仓与详情真实接口均已部署 |
+| P2 | 自建估值引擎 + 精度分级 + 盘中刷新 | 🟡 实现与告警已部署；跨交易日误差样本仍在累积 |
+| P3 | 收益可视化 | 🟡 后端日收益序列已接通；更多归因图仍未做 |
+| P4 | Notifier（Discord） | ✅ 日报/告警双频道、加密绑定、21:00 发送与 22:00 条件补发已部署 |
+| P5 | 持仓穿透 + 客观指标提示 | ✅ 股票敞口、行业、覆盖率与三项事实指标已接真实持仓 |
 | P6 | OCR spike + 落地 | ⚪ |
-| P7 | 交易流水 / 分红 / 多用户加固 | ⚪ |
+| P7 | 交易流水 / 分红 / 多用户加固 | 🟡 五类流水与多用户隔离已完成；更长期运行加固继续随使用验证 |
 
-**注意区分「UI 做完了」和「功能做完了」。** 估值引擎、穿透聚合、Notifier 适配器三块都还是空壳，只有类型定义和界面。
-
-空态 / 加载态 / 陈旧态已补齐（`components/states.tsx`），持仓页与穿透页的分支已经写好，**接数据时不要另起炉灶**：两个页面顶部都有标了「数据接入点」的注释块，把那几行换成 `useQuery` 即可，下面的分支不用动。这几屏用 `?state=empty|loading|stale|failing` 直接看，见 [frontend.md](frontend.md#8-空态--加载态--陈旧态是三件事不能互相代替)。
+空态 / 加载态 / 陈旧态继续复用 `components/states.tsx`。持仓页与穿透页已经用 `useQuery` 接真实接口；`?state=empty|loading|stale|failing` 只保留为状态预览入口，见 [frontend.md](frontend.md#8-空态--加载态--陈旧态是三件事不能互相代替)。
 
 ### 基础设施
 
 | 项 | 状态 |
 |---|---|
 | Workers Paid | ✅ 已订阅，`[limits] cpu_ms = 30000` |
-| D1 `lookthru` | ✅ `0001_probe.sql` + `0002_data_layer.sql` 已应用远端；五张数据层表只读核验通过 |
+| D1 `lookthru` | ✅ `0001`–`0006` 已应用远端；用户、会话、流水、估值与加密通知绑定均已实际读写验证 |
 | KV `CACHE` | ✅ 搜索、基金分类、最新净值、交易日历与告警去重均已上线 |
-| R2 `lookthru-archive` | 🟡 `calendar/trading_days.json` 已生效（242 天，覆盖至 2026-12-31）；其余归档 pipeline 未建 |
+| R2 `lookthru-archive` | ✅ 交易日历、全量基金列表、净值历史与持仓明细 pipeline 均已归档并做字节级回读校验 |
 | Cron | ✅ 正式分派 + 配置同步测试 + 未知表达式告警 + 交易日历守卫，已部署 |
-| GitHub Actions | 🟡 契约测试 + 交易日历 workflow；**缺 `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` secrets，定时刷新跑不起来** |
+| GitHub Actions | ✅ 契约测试与 R2 归档 workflow 已使用仓库 secrets 成功跑通 |
 
-> **部署口径**：数据层、交易日历、估值引擎均已部署生效（Worker 版本 `712e9806`）。写“已实现”时默认指仓库代码，不等于线上已生效 —— 这两件事必须分开说。再加一层：**线上生效也不等于线上有数据**，估值引擎上线当天 8/10 基金因缺前一交易日净值返回 `NONE`，代码、部署、数据是三件事。
+> **部署口径**：写“已实现”不自动等于“线上已生效”，线上生效也不自动等于“线上已有数据”。本表的 ✅ 项均同时经过代码验证与对应的生产读写/真实流程；P2 保持 🟡，直到跨交易日误差样本达到可判断的数量。
 
 ---
 
@@ -66,7 +64,7 @@
 
 ## 下一步
 
-> **剩余后端工作已整体交给 Codex**，见 [codex-goal.md](codex-goal.md)（目标、约束、已定死的决策、自主权边界）。验收时逐条对 [codex-review-agenda.md](codex-review-agenda.md) —— 那份是在他开工**之前**写的预测，事后拿现实去对，避免「做出来什么就觉得什么合理」。
+> [codex-goal.md](codex-goal.md) 的可用链路已经实现并完成生产验收。接下来不再补同一功能的第二套实现：优先观察 P2 的跨交易日误差、上游契约与每日通知的长期运行信号，再决定是否进入 P6 OCR。
 >
 > 下面各节保留原始设计依据与背景，仍然是权威来源；codex-goal.md 只是把它们重排成一个可交付的目标。
 
@@ -113,31 +111,11 @@ if start_year + 1 in links:
 
 做完这块，估值引擎才有「写完就能自证对错」的条件。
 
-### 1. 估值引擎（P2）—— 🟡 已落地并部署，验收未开始
+### 1. 估值引擎（P2）—— 🟡 实现完成，等待跨日样本形成结论
 
-`apps/api/src/valuation/{engine,service,universe}.ts` + `sources/danjuan.ts`（业绩基准兜底）。`/api/valuations?codes=` 已上线，接入 09:25 预热、分钟估值、15:05 收盘任务、14:55 采样。生产版本 `712e9806`。
+`apps/api/src/valuation/{engine,service,universe,report}.ts` + `sources/danjuan.ts` 已上线。09:25 预热、交易时段分钟估值、14:55 校准采样、15:05 收盘快照和晚间官方净值回填均有独立分派；KV 保留 7 天 last-known-good。`NONE` 已拆分为结构性禁用与缺输入，缺输入、整批失败和官方净值不完整都会产生按日去重告警。
 
-**验收数据要到 2026-08-13 晚上才有第一条。** 今天（08-12）线上 10 只里 8 只是 `NONE`：`latest_official_navs` 表为空，场外基金拿不到前一交易日净值，引擎按设计 fail closed。原因是官方净值同步此前用 `listActiveFundCodes`（真实持仓为空 → 一只都不同步），改成 `listValuationFundCodes` 是随本次部署才生效的，第一次覆盖这 10 只要等今晚 19:30。已验证新浪上游对这 10 只全部返回 08-11 净值，今晚能补上。
-
-时间线：今晚 19:30 落净值 → 08-13 14:55 出第一批带 `HIGH`/`MEDIUM` 的样本 → 08-13 19:30 落当日官方净值后即可算首份误差报表。今天 14:55 会写下 8 条 `est_nav` 为 NULL 的样本，属正常留痕，别当成数据已就绪。
-
-复盘见下方 [P2 复盘](#p2-复盘落地当天发现的七件事)。
-
-**入手点**：`apps/api/src/valuation/`。
-
-已有的原料：
-- `packages/shared/src/index.ts` 的 `Valuation` / `ValuationPrecision` 类型，以及 `isQdii()` `isBondOrMoneyFund()` `isPassiveIndexFund()` `isExchangeTradedCode()` 判定函数
-- `sources/eastmoney.ts` 的 `parsePingzhongData()`（每日股票仓位历史）、`fetchHoldings()`（重仓股权重 `JZBL` + 行业分类）
-- `sources/quotes.ts` 的 `fetchQuotesResilient()`（实时行情 + `delayed` 标记）
-
-公式与精度分档见 [architecture.md](architecture.md#自建估值引擎--精度分级)。
-
-**必须注意**：
-- QDII / 债基 / 货基 直接 `NONE`，不要试图估
-- `delayed: true` 时精度要降级，且 `basis.note` 要说明
-- `basis` 里的 `reportDate` / `staleDays` / `coverageWeight` 是 UI 展示用的，不能空着
-
-**验收**：选 10 只基金（2 ETF、3 指数、5 主动），交易日 14:55 记录估值，次日与官方净值比对。`HIGH` < 0.15%，`MEDIUM` < 0.6%，达不到就调阈值 —— 不要调 UI 去掩盖。验收池固定在 `valuation/universe.ts`，与真实持仓合并，保证空仓期也有对账数据。
+验收池保留原 10 只并追加 050002，场内 `EXACT` 单列折溢价；`HIGH`/`MEDIUM` 的误差报表由 `/api/valuation-report` 读取 D1。公式与精度分档见 [architecture.md](architecture.md#自建估值引擎--精度分级)。下方七条保留为落地当天的历史复盘，当前均已修复；剩余工作是让 14:55 与晚间官方净值自然累积足够多的跨交易日样本，而不是再改阈值。
 
 #### P2 复盘：落地当天发现的七件事
 
@@ -166,45 +144,30 @@ if start_year + 1 in links:
 
 另有一条工具口径：远端 D1 的 CLI 查询是能用的，要带 `-c .wrangler.generated.toml`（仓库里的 `wrangler.toml` 是占位符版本，直接查会报 7400/7403，不是权限问题）。
 
-### 2. 持仓穿透聚合（P5）
+### 2. 持仓穿透聚合（P5）—— ✅ 已完成
 
 项目名就来自这个功能，天天基金不做。
 
-**入手点**：新建 `apps/api/src/xray/`。
+`apps/api/src/xray/` 按「基金持仓市值 × 股票占基金净值比」聚合股票与行业，整体报告期取所有基金里最旧日期。返回值把覆盖率、估值/官方净值口径、延时与陈旧行情作为一等字段；UI 已直接读取 `/api/xray`。生产验收中，005827 的官方市值 ¥1549.90 × 腾讯控股权重 5.72% = ¥88.65，与接口一致。
 
-把用户所有持仓基金的前十大重仓股按「基金持仓市值 × 该股占基金净值比」加权汇总，得到股票级真实敞口；同时按 `INDEXNAME` 汇总行业分布，算重叠度。
+### 3. Notifier（P4）—— ✅ Discord 已完成
 
-`fetchHoldings()` 已经返回了 `weight`(JZBL)、`secid`、`industries`，数据是齐的。UI 在 `routes/XRay.tsx`，fixture 结构见 `lib/mock.ts` 的 `MOCK_EXPOSURE` / `MOCK_SECTORS` / `MOCK_XRAY_META`。
-
-**注意**：前十大只覆盖 40–70% 净值，穿透结果必须标注覆盖率，不能让用户以为是全部持仓。
-
-### 3. Notifier（P4）
-
-三个适配器实现同一个接口，飞书优先（大陆可直连、卡片消息最好）。
-
-**入手点**：新建 `apps/api/src/notify/`，接口见 [architecture.md](architecture.md#notifier-抽象)。
-
-**注意**：webhook URL 是密钥，D1 里要加密存储，不能明文。部分基金净值未更新时照发，卡片内标注「N 只未更新」。
+`apps/api/src/notify/` 已实现 Discord 适配器；日报与告警使用两个独立的 per-user binding，webhook 以 AES-GCM 密文存 D1，`NOTIFY_KEY` 缺失时部署或写入会明确失败。21:00 交易日日报成功后写 KV，22:00 仅补发未成功用户；部分净值缺失照发并明确标数。Telegram 与飞书没有出口证据，按既定边界未提前实现。
 
 ---
 
-## 还需要建的东西
+## 本轮已补齐的基础能力
 
-（D1 建表 / Cron 分派 / KV 缓存已在第 0 步完成；交易日历 pipeline 仍是前置。）
-
-- **邀请码与注册流**：表建好之后的那一层。目前没有任何鉴权，`/api/*` 全部裸奔
-- **`pipelines/` 的其余批处理**：交易日历已完成。还差全量基金列表、净值归档、持仓明细。这里可以用 AKShare
+- 邀请码兑换、一次性恢复码、HttpOnly 会话与默认保护的 API 白名单；公开基金路由另有 KV IP 限流。
+- 五类交易流水推导持仓，`positions_cache` 只作带世代号的缓存，`PENDING` 不计入持仓。
+- 全量基金列表、净值历史与持仓明细 pipeline；写入前全量校验，残缺输入不会产出归档。
 
 ---
 
 ## 待验证 / 遗留问题
 
-- **GitHub Actions 缺 Cloudflare 凭据** —— 仓库 Actions secrets 里没有 `CLOUDFLARE_API_TOKEN`（R2 Object Read & Write）和 `CLOUDFLARE_ACCOUNT_ID`。当前 2026 日历能用到年底，但每月刷新和 2027 自动生成都不会执行。**第一次红会在 2026-09-02 出现**
-- **估值验收数据链未闭环** —— 今晚 19:30 的官方净值同步是唯一还没跑过的一环，且它失败时**不会有任何红**（见 P2 复盘第 1 条）。08-13 早上先查 `SELECT COUNT(*) FROM latest_official_navs`，不是 10 就说明没同步上，别等到 14:55 采样才发现
-- **`/api/*` 无鉴权** —— 站点是公开 URL，任何人都能打 `/api/probe/run` 触发一次探测、拿 `/api/quotes` 当免费行情代理。新增的 `/api/valuations` 单次最多 100 个代码 = 100 次 KV 读，同样裸奔。做用户系统时一并收口
-- **交易日才能测的**：`push2delay` 的实际延时有多少（决定它作为兜底源时估值精度降几级）；估值引擎各精度档的实测误差。周末验不了
+- **需要自然时间累积**：P2 各精度档的跨交易日误差分布、`push2delay` 实际延迟，以及 21:00/22:00 Cron 的长期稳定性。失败、补发和去重路径已有自动化验证与真实 Discord 成功/失败验收，但不能用手动请求伪造数周运行历史。
 - **「高」档精度徽章待设计确认** —— 设计稿缺这一档，当前是插值补的，见 [frontend.md](frontend.md#2-精度徽章不可弱化)
-- **搜索结果缺涨跌幅** —— 东财 suggest 不返回前收盘价。搜索 KV 缓存已实现，部署后可以评估对结果追加一次新浪批量接口
 - **OCR 路线未 spike**（P6）。三条路线横评设计见下
 
 ### P6 OCR spike 设计

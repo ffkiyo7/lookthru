@@ -25,7 +25,8 @@ import {
   generateNotifyKey,
 } from '../apps/api/src/notify/crypto';
 import { buildDiscordDailyPayload, DiscordNotifier } from '../apps/api/src/notify/discord';
-import type { DailyBrief, NotifyBinding } from '../apps/api/src/notify/types';
+import { runDailyBrief } from '../apps/api/src/notify/jobs';
+import type { DailyBrief, Notifier, NotifyBinding } from '../apps/api/src/notify/types';
 
 function utc(value: string): number {
   return Date.parse(value);
@@ -38,6 +39,7 @@ describe('Cron 分派', () => {
     const configured = [...block.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
     expect(configured.sort()).toEqual(Object.values(CRONS).sort());
     expect(toml).not.toContain('ENVIRONMENT');
+    expect(toml).toMatch(/\[secrets\]\s*required\s*=\s*\["NOTIFY_KEY"\]/);
   });
 
   it('保留独立的出口探针', () => {
@@ -52,6 +54,15 @@ describe('Cron 分派', () => {
     );
     expect(classifyScheduledTask(CRONS.officialNavOnHour, utc('2026-08-11T12:00:00Z'))).toBe(
       'OFFICIAL_NAV',
+    );
+  });
+
+  it('21:00 日报与 22:00 补发使用两条独立分派', () => {
+    expect(classifyScheduledTask(CRONS.dailyBrief, utc('2026-08-11T13:00:00Z'))).toBe(
+      'DAILY_BRIEF',
+    );
+    expect(classifyScheduledTask(CRONS.dailyBriefRetry, utc('2026-08-11T14:00:00Z'))).toBe(
+      'DAILY_BRIEF_RETRY',
     );
   });
 
@@ -532,5 +543,99 @@ describe('Discord Notifier', () => {
     });
     expect(calls).toBe(2);
     expect(sleeps).toEqual([250]);
+  });
+
+  it('21:00 失败不记成功，22:00 会补发；成功后再次触发不会重复', async () => {
+    const key = generateNotifyKey();
+    const encrypted = await encryptWebhookUrl(key, DISCORD_BINDING.webhookUrl, {
+      userId: DISCORD_BINDING.userId,
+      kind: DISCORD_BINDING.kind,
+      provider: DISCORD_BINDING.provider,
+    });
+    const cache = new Map<string, string>();
+    const env = {
+      NOTIFY_KEY: key,
+      CACHE: {
+        get: async (cacheKey: string, type?: string) => {
+          const value = cache.get(cacheKey);
+          if (value === undefined) return null;
+          return type === 'json' ? JSON.parse(value) : value;
+        },
+        put: async (cacheKey: string, value: string) => {
+          cache.set(cacheKey, value);
+        },
+      },
+      DB: {
+        prepare: (sql: string) => ({
+          bind: (...values: unknown[]) => ({
+            all: async () => {
+              if (sql.includes('FROM notify_bindings')) {
+                expect(values).toEqual(['DAILY']);
+                return {
+                  results: [
+                    {
+                      id: DISCORD_BINDING.id,
+                      user_id: DISCORD_BINDING.userId,
+                      kind: DISCORD_BINDING.kind,
+                      provider: DISCORD_BINDING.provider,
+                      encryption_version: encrypted.version,
+                      webhook_iv: encrypted.iv,
+                      webhook_ciphertext: encrypted.ciphertext,
+                    },
+                  ],
+                };
+              }
+              if (sql.includes('FROM transactions')) {
+                expect(values).toEqual([DISCORD_BINDING.userId]);
+                return { results: [] };
+              }
+              throw new Error(`测试未处理的 SQL: ${sql}`);
+            },
+          }),
+        }),
+      },
+    } as never;
+    let attempts = 0;
+    const notifier: Notifier = {
+      send: vi.fn(async () => {
+        attempts++;
+        return attempts === 1
+          ? { ok: false, status: 404, retried: false, error: 'Discord webhook 返回 HTTP 404' }
+          : { ok: true, status: 204, retried: false, error: null };
+      }),
+    };
+    const scheduledTime = utc('2026-08-11T13:00:00Z');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      await expect(runDailyBrief(env, scheduledTime, false, notifier)).rejects.toThrow(
+        '日报发送失败 1/1',
+      );
+      expect(cache.size).toBe(0);
+
+      await expect(
+        runDailyBrief(env, scheduledTime + 60 * 60 * 1_000, true, notifier),
+      ).resolves.toEqual({
+        bindings: 1,
+        sent: 1,
+        skippedAlreadySent: 0,
+        failed: 0,
+        retry: true,
+      });
+      expect(cache.size).toBe(1);
+
+      await expect(
+        runDailyBrief(env, scheduledTime + 2 * 60 * 60 * 1_000, true, notifier),
+      ).resolves.toEqual({
+        bindings: 1,
+        sent: 0,
+        skippedAlreadySent: 1,
+        failed: 0,
+        retry: true,
+      });
+      expect(notifier.send).toHaveBeenCalledTimes(2);
+    } finally {
+      error.mockRestore();
+    }
   });
 });
