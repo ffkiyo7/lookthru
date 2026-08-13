@@ -1,5 +1,6 @@
 import type { LatestOfficialNav } from '@lookthru/shared';
-import { getFundMeta, type FundMeta } from '../fund-meta';
+import { getLatestOfficialNav } from '../data/navs';
+import { cacheFundMetaFromSearchHit, getFundMeta, type FundMeta } from '../fund-meta';
 import { searchFunds, type FundSearchHit } from '../sources/eastmoney';
 import { fetchNavBatch, type SinaNav } from '../sources/sina';
 import type { Env } from '../env';
@@ -7,11 +8,88 @@ import { listValuationFundCodes } from '../valuation/universe';
 
 const DB_BATCH_ROWS = 400;
 const LATEST_NAV_TTL_SECONDS = 60 * 60;
+const INITIAL_NAV_MISS_TTL_SECONDS = 5 * 60;
 
 export interface OfficialNavSyncResult {
   requested: number;
   stored: number;
   skipped: string[];
+}
+
+export function officialNavFromSearchHit(
+  hit: FundSearchHit,
+  fetchedAt: string,
+): LatestOfficialNav | null {
+  if (hit.nav === null || hit.navDate === null) return null;
+  return hit.isMoneyFund
+    ? {
+        fundCode: hit.code,
+        valueKind: 'TEN_THOUSAND_YIELD',
+        unitNav: null,
+        accNav: null,
+        chgPct: null,
+        tenThousandYield: hit.nav,
+        sevenDayYieldPct: null,
+        navDate: hit.navDate,
+        source: 'eastmoney:suggest',
+        fetchedAt,
+      }
+    : {
+        fundCode: hit.code,
+        valueKind: 'UNIT_NAV',
+        unitNav: hit.nav,
+        accNav: null,
+        chgPct: null,
+        tenThousandYield: null,
+        sevenDayYieldPct: null,
+        navDate: hit.navDate,
+        source: 'eastmoney:suggest',
+        fetchedAt,
+      };
+}
+
+async function persistInitialSearchHit(
+  env: Env,
+  hit: FundSearchHit,
+  missKey: string,
+): Promise<LatestOfficialNav | null> {
+  await cacheFundMetaFromSearchHit(env, hit);
+  const row = officialNavFromSearchHit(hit, new Date().toISOString());
+  if (!row) {
+    await env.CACHE.put(missKey, '1', { expirationTtl: INITIAL_NAV_MISS_TTL_SECONDS });
+    return null;
+  }
+  await persistOfficialNavs(env, [row]);
+  return (await getLatestOfficialNav(env, hit.code)) ?? row;
+}
+
+export async function syncOfficialNavFromSearchHit(
+  env: Env,
+  hit: FundSearchHit,
+): Promise<LatestOfficialNav | null> {
+  const existing = await getLatestOfficialNav(env, hit.code);
+  if (existing) return existing;
+  const missKey = `nav-initial-miss:${hit.code}`;
+  if ((await env.CACHE.get(missKey)) !== null) return null;
+  return persistInitialSearchHit(env, hit, missKey);
+}
+
+/**
+ * 首次出现的基金只补一次共享官方值。结果写入 D1/KV 后归所有用户共用，
+ * 后续同一基金不会因为新增持仓再次请求上游。
+ */
+export async function syncOfficialNavForFund(
+  env: Env,
+  fundCode: string,
+): Promise<LatestOfficialNav | null> {
+  const existing = await getLatestOfficialNav(env, fundCode);
+  if (existing) return existing;
+  const missKey = `nav-initial-miss:${fundCode}`;
+  if ((await env.CACHE.get(missKey)) !== null) return null;
+
+  const hit = (await searchFunds(fundCode)).find((candidate) => candidate.code === fundCode);
+  if (!hit) throw new Error(`基金搜索未返回精确代码 ${fundCode}`);
+  return persistInitialSearchHit(env, hit, missKey);
 }
 
 export async function syncOfficialNavs(env: Env): Promise<OfficialNavSyncResult> {

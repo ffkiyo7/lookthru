@@ -30,11 +30,13 @@ import {
 } from './data/notify';
 import type { Env } from './env';
 import { getCachedHoldings } from './fund-holdings';
-import { PASS_THRESHOLD, probeStats, runProbe } from './probe';
-import { loadPositionSnapshot, PositionDataUnavailableError } from './positions';
-import { getCachedQuotes, type CachedQuoteResult } from './quote-cache';
+import { getFundMeta } from './fund-meta';
+import { syncOfficialNavForFund, syncOfficialNavFromSearchHit } from './nav/sync';
 import { DiscordNotifier, validateDiscordWebhookUrl } from './notify/discord';
 import { buildDailyBrief } from './notify/jobs';
+import { PASS_THRESHOLD, probeStats, runProbe } from './probe';
+import { loadPositionSnapshot } from './positions';
+import { getCachedQuotes, type CachedQuoteResult } from './quote-cache';
 import { getDailyReturns } from './returns';
 import { consumeKvRateLimit } from './rate-limit';
 import { getFundSearchChanges } from './search-changes';
@@ -272,6 +274,16 @@ app.get('/api/funds/search', async (c) => {
   if (!q) return c.json({ error: 'missing q' }, 400);
   if (q.length > 64) return c.json({ error: 'query too long' }, 400);
   const hits = await cachedJson(c.env.CACHE, searchCacheKey(q), 60 * 60, () => searchFunds(q));
+  const exactHit = /^\d{6}$/.test(q)
+    ? hits.find((candidate) => candidate.code === q)
+    : undefined;
+  if (exactHit) {
+    c.executionCtx.waitUntil(
+      syncOfficialNavFromSearchHit(c.env, exactHit).catch((error) => {
+        console.warn(`[fund-search] 共享官方净值预热失败 code=${exactHit.code}`, error);
+      }),
+    );
+  }
   const regularCodes = hits.filter((hit) => !hit.isMoneyFund).map((hit) => hit.code);
   const changes = await getFundSearchChanges(c.env.CACHE, regularCodes);
   return c.json(
@@ -380,7 +392,25 @@ app.delete('/api/transactions/:id', async (c) => {
   return c.body(null, 204);
 });
 
-app.get('/api/positions', async (c) => c.json(await loadPositionSnapshot(c.env, c.get('userId'))));
+app.get('/api/positions', async (c) => {
+  const snapshot = await loadPositionSnapshot(c.env, c.get('userId'));
+  for (const position of snapshot.positions) {
+    if (position.officialValue === null) {
+      c.executionCtx.waitUntil(
+        syncOfficialNavForFund(c.env, position.fundCode).catch((error) => {
+          console.warn(`[positions] 官方净值后台补齐失败 code=${position.fundCode}`, error);
+        }),
+      );
+    } else if (position.fundName === `基金 ${position.fundCode}`) {
+      c.executionCtx.waitUntil(
+        getFundMeta(c.env, position.fundCode).catch((error) => {
+          console.warn(`[positions] 基金资料后台补齐失败 code=${position.fundCode}`, error);
+        }),
+      );
+    }
+  }
+  return c.json(snapshot);
+});
 
 app.get('/api/xray', async (c) => c.json(await loadXRaySnapshot(c.env, c.get('userId'))));
 
@@ -470,7 +500,6 @@ app.onError((err, c) => {
   if (err instanceof TransactionNotFoundError) return c.json({ error: err.message }, 404);
   if (err instanceof TransactionConflictError) return c.json({ error: err.message }, 409);
   if (err instanceof TransactionDomainError) return c.json({ error: err.message }, 400);
-  if (err instanceof PositionDataUnavailableError) return c.json({ error: err.message }, 503);
   console.error('[api]', err);
   return c.json({ error: 'internal error' }, 500);
 });

@@ -132,11 +132,15 @@ export function XRay() {
       />
 
       {(query.data.holdingsStaleFundCount > 0 ||
+        query.data.unavailableValueFundCount > 0 ||
         query.data.quoteDelayed ||
         query.data.quoteStaleSecids.length > 0 ||
         query.data.quoteUnavailableSecids.length > 0) && (
         <div className="mt-3">
           <WarnBar>
+            {query.data.unavailableValueFundCount > 0
+              ? `${query.data.unavailableValueFundCount} 只基金净值待同步，暂未计入穿透；`
+              : ''}
             {query.data.holdingsStaleFundCount > 0
               ? `${query.data.holdingsStaleFundCount} 只基金使用陈旧持仓；`
               : ''}

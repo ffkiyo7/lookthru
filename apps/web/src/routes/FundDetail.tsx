@@ -146,12 +146,37 @@ export function FundDetail() {
           <div className="grid grid-cols-2 gap-x-3 gap-y-4">
             <Field label="持有份额">{formatShares(position.shares)}</Field>
             <Field label="持仓成本">{formatNav(position.costPerShare)}</Field>
-            <Field label="参考市值"><Money value={presentedPosition!.marketValue} /></Field>
+            <Field label="参考市值">
+              {presentedPosition!.marketValue === null ? (
+                '——'
+              ) : (
+                <Money value={presentedPosition!.marketValue} />
+              )}
+            </Field>
             <Field label="持有收益">
-              <Money value={presentedPosition!.holdingReturn} sign colored className="font-bold" />
-              <Change value={presentedPosition!.holdingReturnPct} className="ml-1 text-xs font-semibold" />
+              {presentedPosition!.holdingReturn === null ? (
+                '——'
+              ) : (
+                <>
+                  <Money
+                    value={presentedPosition!.holdingReturn}
+                    sign
+                    colored
+                    className="font-bold"
+                  />
+                  <Change
+                    value={presentedPosition!.holdingReturnPct}
+                    className="ml-1 text-xs font-semibold"
+                  />
+                </>
+              )}
             </Field>
           </div>
+          {presentedPosition!.marketValue === null && (
+            <div className="mt-3">
+              <InfoBar>持仓已保存，官方净值正在后台同步；份额与累计成本不受影响。</InfoBar>
+            </div>
+          )}
         </Card>
       )}
 

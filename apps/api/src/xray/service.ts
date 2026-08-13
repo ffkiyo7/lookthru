@@ -3,7 +3,7 @@ import type { HoldingsResult } from '../sources/eastmoney';
 export interface XRayFundInput {
   fundCode: string;
   fundName: string;
-  officialMarketValue: number;
+  officialMarketValue: number | null;
   estimatedMarketValue: number | null;
   heldDays: number | null;
   holdings: HoldingsResult;
@@ -81,7 +81,7 @@ export function aggregateXRay(
 ): XRayResult {
   const totalMarketValue = funds.reduce((sum, fund) => {
     const marketValue = fund.estimatedMarketValue ?? fund.officialMarketValue;
-    if (!Number.isFinite(marketValue) || marketValue < 0) {
+    if (marketValue === null || !Number.isFinite(marketValue) || marketValue < 0) {
       throw new Error(`基金 ${fund.fundCode} 的穿透市值非法: ${marketValue}`);
     }
     return sum + marketValue;
@@ -95,6 +95,9 @@ export function aggregateXRay(
 
   for (const fund of funds) {
     const marketValue = fund.estimatedMarketValue ?? fund.officialMarketValue;
+    if (marketValue === null) {
+      throw new Error(`基金 ${fund.fundCode} 缺少穿透市值`);
+    }
     if (fund.holdings.reportDate !== null) reportDates.push(fund.holdings.reportDate);
     if (
       !Number.isFinite(fund.holdings.coverageWeight) ||
