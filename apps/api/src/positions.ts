@@ -1,20 +1,17 @@
 import { Position, type LatestOfficialNav, type Valuation } from '@lookthru/shared';
 import { getLatestOfficialNav } from './data/navs';
-import { derivePositions, listTransactions } from './data/transactions';
+import {
+  derivePositions,
+  listTransactions,
+  type DerivedPosition,
+} from './data/transactions';
 import type { Env } from './env';
-import { getFundMeta } from './fund-meta';
+import { getCachedFundMeta, type FundMeta } from './fund-meta';
 import { getCachedValuations } from './valuation/service';
-
-export class PositionDataUnavailableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'PositionDataUnavailableError';
-  }
-}
 
 export interface PositionSnapshot {
   updatedAt: string | null;
-  positions: Array<Position & { officialValue: LatestOfficialNav }>;
+  positions: Array<Position & { officialValue: LatestOfficialNav | null }>;
 }
 
 function regularDayReturn(shares: number, nav: LatestOfficialNav): number | null {
@@ -49,6 +46,46 @@ function latestTimestamp(navs: LatestOfficialNav[], valuations: Valuation[]): st
   return timestamps.sort().at(-1) ?? null;
 }
 
+export function assemblePositionSnapshot(
+  derived: DerivedPosition[],
+  metas: Array<FundMeta | null>,
+  navs: Array<LatestOfficialNav | null>,
+  valuationMap: ReadonlyMap<string, Valuation>,
+): PositionSnapshot {
+  if (derived.length !== metas.length || derived.length !== navs.length) {
+    throw new Error('持仓、基金资料与官方净值数量不一致');
+  }
+  const completeNavs: LatestOfficialNav[] = [];
+  const positions = derived.map((derivedPosition, index) => {
+    const meta = metas[index] ?? null;
+    const nav = navs[index] ?? null;
+    if (nav) completeNavs.push(nav);
+    const marketValue = nav ? officialMarketValue(derivedPosition.shares, nav) : null;
+    const holdingReturn = marketValue === null ? null : marketValue - derivedPosition.costTotal;
+    const valuation = valuationMap.get(derivedPosition.fundCode) ?? null;
+    const position = Position.parse({
+      fundCode: derivedPosition.fundCode,
+      fundName: meta?.name ?? `基金 ${derivedPosition.fundCode}`,
+      shares: derivedPosition.shares,
+      costTotal: derivedPosition.costTotal,
+      costPerShare: derivedPosition.costPerShare,
+      marketValue,
+      holdingReturn,
+      holdingReturnPct:
+        holdingReturn !== null && derivedPosition.costTotal > 0
+          ? (holdingReturn / derivedPosition.costTotal) * 100
+          : null,
+      dayReturn: nav ? positionDayReturn(derivedPosition.shares, nav) : null,
+      valuation,
+    });
+    return { ...position, officialValue: nav };
+  });
+  return {
+    updatedAt: latestTimestamp(completeNavs, [...valuationMap.values()]),
+    positions,
+  };
+}
+
 export async function loadPositionSnapshot(env: Env, userId: string): Promise<PositionSnapshot> {
   const transactions = await listTransactions(env.DB, userId);
   const derived = derivePositions(transactions);
@@ -56,45 +93,20 @@ export async function loadPositionSnapshot(env: Env, userId: string): Promise<Po
 
   const codes = derived.map((position) => position.fundCode);
   const [metas, navs, valuationMap] = await Promise.all([
-    Promise.all(codes.map((code) => getFundMeta(env, code))),
+    Promise.all(
+      codes.map(async (code) => {
+        try {
+          return await getCachedFundMeta(env, code);
+        } catch (error) {
+          // 用户自己的份额与成本不能被基金名称上游挡住；代码仍可作为明确占位。
+          console.warn(`[positions] 基金资料暂不可用 code=${code}`, error);
+          return null;
+        }
+      }),
+    ),
     Promise.all(codes.map((code) => getLatestOfficialNav(env, code))),
     getCachedValuations(env, codes),
   ]);
 
-  const completeNavs: LatestOfficialNav[] = [];
-  const positions = derived.map((derivedPosition, index) => {
-    const meta = metas[index];
-    const nav = navs[index];
-    if (!meta) {
-      throw new PositionDataUnavailableError(`基金资料尚未同步 code=${derivedPosition.fundCode}`);
-    }
-    if (!nav) {
-      throw new PositionDataUnavailableError(`官方净值尚未同步 code=${derivedPosition.fundCode}`);
-    }
-    completeNavs.push(nav);
-    const marketValue = officialMarketValue(derivedPosition.shares, nav);
-    const holdingReturn = marketValue - derivedPosition.costTotal;
-    const valuation = valuationMap.get(derivedPosition.fundCode) ?? null;
-    const position = Position.parse({
-      fundCode: derivedPosition.fundCode,
-      fundName: meta.name,
-      shares: derivedPosition.shares,
-      costTotal: derivedPosition.costTotal,
-      costPerShare: derivedPosition.costPerShare,
-      marketValue,
-      holdingReturn,
-      holdingReturnPct:
-        derivedPosition.costTotal > 0 ? (holdingReturn / derivedPosition.costTotal) * 100 : 0,
-      dayReturn: positionDayReturn(derivedPosition.shares, nav),
-      valuation,
-    });
-    // Position 是前后端共享的持仓计算类型；官方值是本接口的展示上下文，
-    // 与估值同包返回，避免 UI 在估值缺失时把 0 伪装成官方净值。
-    return { ...position, officialValue: nav };
-  });
-
-  return {
-    updatedAt: latestTimestamp(completeNavs, [...valuationMap.values()]),
-    positions,
-  };
+  return assemblePositionSnapshot(derived, metas, navs, valuationMap);
 }

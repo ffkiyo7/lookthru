@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { LatestOfficialNav } from '../packages/shared/src';
-import { persistOfficialNavs } from '../apps/api/src/nav/sync';
+import { LatestOfficialNav, Position } from '../packages/shared/src';
+import { officialNavFromSearchHit, persistOfficialNavs } from '../apps/api/src/nav/sync';
 import { derivePositions } from '../apps/api/src/data/transactions';
 import type { Transaction } from '../packages/shared/src';
+import { assemblePositionSnapshot } from '../apps/api/src/positions';
 import { aggregateXRay } from '../apps/api/src/xray/service';
 import { heldDaysByFund } from '../apps/api/src/xray/loader';
 import { computeDailyReturns } from '../apps/api/src/returns';
@@ -79,6 +80,40 @@ describe('最新官方值分型', () => {
 
     await expect(persistOfficialNavs(env, rows)).resolves.toBe(1);
     expect(cacheWrites).toEqual(['navlatest:000001']);
+  });
+
+  it('首次录入可把搜索结果转换为共享官方值，普通净值与万份收益不混用', () => {
+    const fetchedAt = '2026-08-13T01:00:00.000Z';
+    const common = {
+      name: '测试基金',
+      pinyin: 'CSJJ',
+      type: '指数型-海外股票',
+      nav: 1.7166,
+      navDate: '2026-08-11',
+      company: '测试基金公司',
+    };
+    expect(
+      officialNavFromSearchHit(
+        { ...common, code: '017641', isMoneyFund: false },
+        fetchedAt,
+      ),
+    ).toMatchObject({
+      fundCode: '017641',
+      valueKind: 'UNIT_NAV',
+      unitNav: 1.7166,
+      tenThousandYield: null,
+    });
+    expect(
+      officialNavFromSearchHit(
+        { ...common, code: '000009', type: '货币型-普通货币', isMoneyFund: true },
+        fetchedAt,
+      ),
+    ).toMatchObject({
+      fundCode: '000009',
+      valueKind: 'TEN_THOUSAND_YIELD',
+      unitNav: null,
+      tenThousandYield: 1.7166,
+    });
   });
 });
 
@@ -185,6 +220,39 @@ describe('流水推导持仓', () => {
 });
 
 describe('前端持仓汇总', () => {
+  it('官方净值待同步时仍返回份额与成本，不伪造市值和收益', () => {
+    const snapshot = assemblePositionSnapshot(
+      [{ fundCode: '017641', shares: 316.53, costTotal: 550, costPerShare: 550 / 316.53 }],
+      [
+        {
+          code: '017641',
+          name: '摩根标普500指数(QDII)人民币A',
+          type: '指数型-海外股票',
+          isMoneyFund: false,
+        },
+      ],
+      [null],
+      new Map(),
+    );
+
+    expect(snapshot).toMatchObject({
+      updatedAt: null,
+      positions: [
+        {
+          fundCode: '017641',
+          fundName: '摩根标普500指数(QDII)人民币A',
+          shares: 316.53,
+          costTotal: 550,
+          marketValue: null,
+          holdingReturn: null,
+          holdingReturnPct: null,
+          officialValue: null,
+        },
+      ],
+    });
+    expect(Position.safeParse(snapshot.positions[0]).success).toBe(true);
+  });
+
   it('只从真实持仓推导汇总，并明确统计不可估基金', () => {
     const positions = [
       {
@@ -232,6 +300,18 @@ describe('前端持仓汇总', () => {
           basis: { reportDate: null, staleDays: null, coverageWeight: null, note: '债基不可估' },
         },
       },
+      {
+        fundCode: '017641',
+        fundName: '摩根标普500指数(QDII)人民币A',
+        shares: 316.53,
+        costTotal: 550,
+        costPerShare: 550 / 316.53,
+        marketValue: null,
+        holdingReturn: null,
+        holdingReturnPct: null,
+        dayReturn: null,
+        valuation: null,
+      },
     ];
 
     const summary = summarizePositions(positions);
@@ -239,7 +319,8 @@ describe('前端持仓汇总', () => {
       marketValue: 204,
       holdingReturn: 14,
       holdingReturnPct: (14 / 190) * 100,
-      unestimatedCount: 1,
+      unestimatedCount: 2,
+      unavailableValueCount: 1,
     });
     expect(summary.dayReturn).toBeCloseTo(5);
     expect(summary.dayReturnPct).toBeCloseTo((5 / 199) * 100);

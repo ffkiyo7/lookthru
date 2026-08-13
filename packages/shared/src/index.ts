@@ -183,10 +183,10 @@ export const Position = z.object({
   shares: z.number(),
   costTotal: z.number(),
   costPerShare: z.number(),
-  /** 官方口径：份额 × 最新官方净值 */
-  marketValue: z.number(),
-  holdingReturn: z.number(),
-  holdingReturnPct: z.number(),
+  /** 官方口径：份额 × 最新官方净值；首次录入尚未取得官方值时明确为空。 */
+  marketValue: z.number().nullable(),
+  holdingReturn: z.number().nullable(),
+  holdingReturnPct: z.number().nullable(),
   /** 当日收益（官方净值口径，晚间确认后填充） */
   dayReturn: z.number().nullable(),
   /** 盘中估算，与官方口径严格分离 */

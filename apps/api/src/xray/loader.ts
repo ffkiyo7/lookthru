@@ -41,6 +41,7 @@ export function heldDaysByFund(
 
 export interface XRaySnapshot extends XRayResult {
   updatedAt: string | null;
+  unavailableValueFundCount: number;
   holdingsStaleFundCount: number;
   quoteProvider: string | null;
   quoteDelayed: boolean;
@@ -57,8 +58,15 @@ export async function loadXRaySnapshot(
     loadPositionSnapshot(env, userId),
     listTransactions(env.DB, userId),
   ]);
+  const availablePositions = positionSnapshot.positions.filter((position) => {
+    const valuation = position.valuation;
+    return (
+      position.marketValue !== null ||
+      (valuation !== null && valuation.precision !== 'NONE' && valuation.estNav !== null)
+    );
+  });
   const holdingsSnapshots = await Promise.all(
-    positionSnapshot.positions.map((position) => getCachedHoldings(env, position.fundCode)),
+    availablePositions.map((position) => getCachedHoldings(env, position.fundCode)),
   );
   const secids = holdingsSnapshots.flatMap((snapshot) =>
     snapshot.data.holdings
@@ -67,7 +75,7 @@ export async function loadXRaySnapshot(
   );
   const quotes = await getCachedQuotes(env, secids);
   const heldDays = heldDaysByFund(transactions, asOfMs);
-  const funds = positionSnapshot.positions.map((position, index) => {
+  const funds = availablePositions.map((position, index) => {
     const valuation = position.valuation;
     const estimatedMarketValue =
       valuation !== null && valuation.precision !== 'NONE' && valuation.estNav !== null
@@ -90,6 +98,7 @@ export async function loadXRaySnapshot(
   return {
     ...result,
     updatedAt: positionSnapshot.updatedAt,
+    unavailableValueFundCount: positionSnapshot.positions.length - availablePositions.length,
     holdingsStaleFundCount: holdingsSnapshots.filter((snapshot) => snapshot.stale).length,
     quoteProvider: quotes.provider,
     quoteDelayed: quotes.delayed,

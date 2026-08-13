@@ -116,6 +116,8 @@ function Loaded({
   onRetry?: () => void;
 }) {
   const s = summarizePositions(positions);
+  const hasMarketValue = s.unavailableValueCount < positions.length;
+  const hasDayReturn = s.unestimatedCount < positions.length;
 
   return (
     <>
@@ -123,14 +125,24 @@ function Loaded({
 
       {/* 汇总 */}
       <div className="rounded-[22px] border border-line-card bg-[linear-gradient(158deg,#1c1f27_0%,#131519_78%)] px-5 pt-[22px] pb-[18px] shadow-[0_8px_30px_rgba(0,0,0,.35)]">
-        <div className="text-[12.5px] tracking-wide text-ink-muted">总资产（估算）</div>
+        <div className="text-[12.5px] tracking-wide text-ink-muted">
+          总资产（估算{s.unavailableValueCount > 0 ? `，${s.unavailableValueCount}只未计` : ''}）
+        </div>
         <div className="mt-1.5 text-4xl leading-none font-bold tracking-tight">
-          <Money value={s.marketValue} />
+          {hasMarketValue ? <Money value={s.marketValue} /> : '——'}
         </div>
 
         <div className="mt-5 flex gap-3.5">
-          <SummaryTile label="今日收益" amount={s.dayReturn} pct={s.dayReturnPct} />
-          <SummaryTile label="持有收益" amount={s.holdingReturn} pct={s.holdingReturnPct} />
+          <SummaryTile
+            label="今日收益"
+            amount={hasDayReturn ? s.dayReturn : null}
+            pct={hasDayReturn ? s.dayReturnPct : null}
+          />
+          <SummaryTile
+            label="持有收益"
+            amount={hasMarketValue ? s.holdingReturn : null}
+            pct={hasMarketValue ? s.holdingReturnPct : null}
+          />
         </div>
 
         <FreshnessLine
@@ -143,6 +155,11 @@ function Loaded({
         {s.unestimatedCount > 0 && (
           <div className="mt-2 text-[11px] text-ink-faintest">
             其中 {s.unestimatedCount} 只暂无盘中估算，未计入今日收益
+          </div>
+        )}
+        {s.unavailableValueCount > 0 && (
+          <div className="mt-2 text-[11px] text-ink-faintest">
+            {s.unavailableValueCount} 只官方净值待同步，暂未计入总资产与持有收益
           </div>
         )}
       </div>
@@ -161,29 +178,45 @@ function Loaded({
   );
 }
 
-function SummaryTile({ label, amount, pct }: { label: string; amount: number; pct: number }) {
-  const tone = amount >= 0 ? 'border-up/15 bg-up/8' : 'border-down/15 bg-down/8';
+function SummaryTile({
+  label,
+  amount,
+  pct,
+}: {
+  label: string;
+  amount: number | null;
+  pct: number | null;
+}) {
+  const tone =
+    amount === null || amount >= 0 ? 'border-up/15 bg-up/8' : 'border-down/15 bg-down/8';
   return (
     <div className={`flex-1 rounded-[14px] border px-3.5 py-3 ${tone}`}>
       <div className="text-[11.5px] text-ink-muted">{label}</div>
       <div className="mt-[5px] text-lg font-bold">
-        <Money value={amount} sign colored />
+        {amount === null ? (
+          <span className="text-ink-faintest">——</span>
+        ) : (
+          <Money value={amount} sign colored />
+        )}
       </div>
       <Change value={pct} className="mt-0.5 block text-xs opacity-85" />
     </div>
   );
 }
 
-type DisplayPosition = Position & { officialValue: LatestOfficialNav };
+type DisplayPosition = Position & { officialValue: LatestOfficialNav | null };
 
 function PositionCard({ position: p }: { position: DisplayPosition }) {
   const v = p.valuation;
   const presented = positionPresentation(p);
-  const officialLabel = p.officialValue.valueKind === 'TEN_THOUSAND_YIELD' ? '万份收益' : '官方净值';
+  const officialLabel =
+    p.officialValue?.valueKind === 'TEN_THOUSAND_YIELD' ? '万份收益' : '官方净值';
   const officialValue =
-    p.officialValue.valueKind === 'TEN_THOUSAND_YIELD'
-      ? p.officialValue.tenThousandYield
-      : p.officialValue.unitNav;
+    p.officialValue === null
+      ? null
+      : p.officialValue.valueKind === 'TEN_THOUSAND_YIELD'
+        ? p.officialValue.tenThousandYield
+        : p.officialValue.unitNav;
 
   return (
     <Link to={`/fund/${p.fundCode}`} className="block">
@@ -209,15 +242,19 @@ function PositionCard({ position: p }: { position: DisplayPosition }) {
           <div className="flex items-baseline gap-2.5">
             <span className="text-xs text-ink-faintest">{officialLabel}</span>
             <span className="text-[21px] font-semibold text-[#eceef1]">
-              {formatNav(officialValue)}
+              {officialValue === null ? '——' : formatNav(officialValue)}
             </span>
             <span className="rounded-md bg-white/5 px-[7px] py-0.5 text-[11px] text-ink-faint">
-              昨日确认
+              {officialValue === null ? '待同步' : '昨日确认'}
             </span>
           </div>
         )}
 
-        <div className="text-[11.5px] text-ink-dim">{v?.basis.note}</div>
+        <div className="text-[11.5px] text-ink-dim">
+          {officialValue === null && !presented.estimable
+            ? '持仓已保存，官方净值正在后台同步'
+            : v?.basis.note}
+        </div>
 
         {v?.basis.staleDays !== null &&
           v?.basis.staleDays !== undefined &&
@@ -235,7 +272,11 @@ function PositionCard({ position: p }: { position: DisplayPosition }) {
             )}
           </Cell>
           <Cell label="持有收益">
-            <Money value={presented.holdingReturn} sign colored />
+            {presented.holdingReturn === null ? (
+              <span className="text-ink-faintest">——</span>
+            ) : (
+              <Money value={presented.holdingReturn} sign colored />
+            )}
           </Cell>
         </div>
       </Card>

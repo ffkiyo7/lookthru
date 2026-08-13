@@ -145,7 +145,7 @@ export function fetchFundQuotes(code: string): Promise<
 
 export interface PositionsResponse {
   updatedAt: string | null;
-  positions: Array<Position & { officialValue: LatestOfficialNav }>;
+  positions: Array<Position & { officialValue: LatestOfficialNav | null }>;
 }
 
 export function fetchPositions(): Promise<PositionsResponse> {
@@ -182,6 +182,7 @@ export interface XRayResponse {
     industryOverlap: { overlapPct: number; overlappingIndustryCount: number };
   };
   updatedAt: string | null;
+  unavailableValueFundCount: number;
   holdingsStaleFundCount: number;
   quoteProvider: string | null;
   quoteDelayed: boolean;
