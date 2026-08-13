@@ -158,7 +158,7 @@ if start_year + 1 in links:
 
 ## 本轮已补齐的基础能力
 
-- 邀请码兑换、一次性恢复码、HttpOnly 会话与默认保护的 API 白名单；公开基金路由另有 KV IP 限流。
+- 邀请码兑换、一次性恢复码、HttpOnly 会话与默认保护的 API 白名单；公开基金路由另有节点本地的 Workers Rate Limiting binding。
 - 五类交易流水推导持仓，`positions_cache` 只作带世代号的缓存，`PENDING` 不计入持仓。
 - 全量基金列表、净值历史与持仓明细 pipeline；写入前全量校验，残缺输入不会产出归档。
 

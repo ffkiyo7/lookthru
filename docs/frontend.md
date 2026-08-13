@@ -228,3 +228,5 @@
 `vite-plugin-pwa`，`generateSW` 模式。
 
 `sw.js` 与 `manifest.webmanifest` 必须以 `no-cache` 下发，否则用户永远卡在旧版本 —— 见 `apps/web/public/_headers`。其余带 hash 的静态资源走默认长缓存。
+
+运行时 API 缓存只负责弱网和离线回退：搜索候选用 stale-while-revalidate；基金详情用 network-first，网络等待上限 2 秒。Workbox 的 `RegExp` 路由匹配完整 URL，规则不能写成 `^/api`。数据新鲜度仍以接口里的 `fetchedAt`、`staleSecids`、`delayed` 为准，不能拿 Service Worker 命中时间冒充数据时间。

@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Change } from '../components/Money';
 import { formatNav } from '../lib/format';
 import { searchFunds, shortType, type SearchHit } from '../lib/api';
 
@@ -29,7 +28,7 @@ export function Search() {
 
   const { data, isFetching, isError } = useQuery({
     queryKey: ['search', debounced],
-    queryFn: () => searchFunds(debounced),
+    queryFn: ({ signal }) => searchFunds(debounced, signal),
     enabled: debounced.length > 0,
     staleTime: 60_000,
   });

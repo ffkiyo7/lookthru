@@ -26,7 +26,11 @@ export function tencentUrl(codes: string[]): string {
   return `https://qt.gtimg.cn/q=${codes.join(',')}`;
 }
 
-export async function fetchQuotesTencent(secids: string[]): Promise<Map<string, Quote>> {
+export async function fetchQuotesTencent(
+  secids: string[],
+  signal?: AbortSignal,
+  timeoutMs = 10_000,
+): Promise<Map<string, Quote>> {
   const out = new Map<string, Quote>();
 
   // 保留 secid ↔ 腾讯代码的双向映射，回填时要还原成调用方给的 secid
@@ -39,8 +43,9 @@ export async function fetchQuotesTencent(secids: string[]): Promise<Map<string, 
     const { text } = await fetchText(tencentUrl(chunk.map((p) => p[1])), {
       source: 'tencent:quotes',
       decodeAs: 'latin1',
-      timeoutMs: 10_000,
-      retries: 1,
+      timeoutMs,
+      retries: 0,
+      signal,
     });
     const parsed = parseTencentQuotes(text);
     for (const [secid, tcode] of chunk) {

@@ -59,7 +59,11 @@ export function secidToSina(secid: string): string | null {
   return null;
 }
 
-export async function fetchQuotesSina(secids: string[]): Promise<Map<string, Quote>> {
+export async function fetchQuotesSina(
+  secids: string[],
+  signal?: AbortSignal,
+  timeoutMs = 10_000,
+): Promise<Map<string, Quote>> {
   const out = new Map<string, Quote>();
   const pairs = [...new Set(secids)]
     .map((s) => [s, secidToSina(s)] as const)
@@ -71,8 +75,9 @@ export async function fetchQuotesSina(secids: string[]): Promise<Map<string, Quo
       source: 'sina:quotes',
       referer: REFERER_SINA,
       decodeAs: 'latin1',
-      timeoutMs: 10_000,
-      retries: 1,
+      timeoutMs,
+      retries: 0,
+      signal,
     });
     const parsed = parseSinaQuotes(text);
     for (const [secid, scode] of chunk) {

@@ -145,11 +145,14 @@ valuation_samples(...)         -- 每只基金每天一条 14:55 验收样本，
 
 ```
 D1   用户/邀请码/持仓/交易流水/推送绑定/基金元数据索引/最新净值
-KV   quote:{secid}       TTL 60s
+KV   quote:{secid}       TTL 60s（热行情）
+     quote-lkg:{secid}   TTL 7d（行情 last-known-good）
      est:{fund_code}     TTL 60s
      navlatest:{code}    TTL 1h
      search:{keyword}    TTL 1h
      fundmeta:{code}     TTL 6h
+     holdings:{code}     TTL 6h（热持仓披露）
+     holdings-lkg:{code} TTL 180d（持仓 last-known-good）
 R2   /meta/fundlist.json                    全量基金列表
      /nav/{fund_code}.json.gz               净值全历史
      /holdings/{code}/{report_date}.json    持仓明细
@@ -213,6 +216,10 @@ Cloudflare 的星期编号是 `1=周日`，因此周一至周五必须写 `2-6`�
 `wrangler.toml` 同时保留 P0 的 `*/5 * * * *` 探针与上表正式时刻表；测试会比较配置集合与代码中的 `CRONS` 注册表，未知表达式必须告警，不能静默变成空跑。
 
 **实时刷新方式**：客户端每 60s 轮询自己的 Worker（Worker 读 KV 缓存）。不用 Durable Objects / SSE —— 对当前规模是过度设计，且 DO 额外收费。
+
+分钟估值 Cron 抓到的股票行情同时写入热 KV 和 last-known-good，用户详情与穿透接口复用这份共享数据。热缓存过期后，接口先返回带真实 `fetchedAt` / `staleSecids` 的旧值，再用 `waitUntil` 刷新；完全冷启动才给上游 1.5 秒前台预算。持仓同样按热 KV → last-known-good → R2 → 上游读取。旧值触发的后台刷新再按数据键用节点本地 Rate Limit binding 合并为每分钟最多一次，避免并发访客各打一遍上游。这样仍遵守「绝不 per-user 请求上游」：正常访问只读本地层，只有从未见过的数据或共享后台刷新才碰上游。
+
+公开接口的滥用挡板与共享后台刷新的合并闸门都使用 Workers Rate Limiting binding。它是节点本地的宽松限流，不用于精确计费或安全授权；优点是正常请求不再为 KV 计数器额外往返。
 
 ---
 
