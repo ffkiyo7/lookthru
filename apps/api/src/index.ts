@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { MiddlewareHandler } from 'hono';
 import { z } from 'zod';
+import { parseFundTypeFilter } from '@lookthru/shared';
 import {
   authenticateSession,
   expiredSessionCookie,
@@ -12,6 +13,8 @@ import {
   sessionCookie,
 } from './auth';
 import { cachedJson, searchCacheKey } from './cache';
+import { getFundSearchIndex } from './fund-list';
+import { searchFundsForQuery } from './fund-search';
 import { runScheduledTask } from './cron';
 import {
   confirmTransaction,
@@ -30,7 +33,7 @@ import {
 } from './data/notify';
 import type { Env } from './env';
 import { getCachedHoldings } from './fund-holdings';
-import { getFundMeta } from './fund-meta';
+import { cacheFundMetaFromSearchHit, getFundMeta } from './fund-meta';
 import { syncOfficialNavForFund, syncOfficialNavFromSearchHit } from './nav/sync';
 import { DiscordNotifier, validateDiscordWebhookUrl } from './notify/discord';
 import { buildDailyBrief } from './notify/jobs';
@@ -273,14 +276,26 @@ app.get('/api/funds/search', async (c) => {
   const q = c.req.query('q')?.trim();
   if (!q) return c.json({ error: 'missing q' }, 400);
   if (q.length > 64) return c.json({ error: 'query too long' }, 400);
-  const hits = await cachedJson(c.env.CACHE, searchCacheKey(q), 60 * 60, () => searchFunds(q));
+  const typeFilter = parseFundTypeFilter(c.req.query('type'));
+  if (typeFilter === null) return c.json({ error: 'invalid type' }, 400);
+  // 全量列表在 isolate 内存里搜；东财 suggest 只留给本地没有的精确 6 位代码。
+  const index = await getFundSearchIndex(c.env);
+  const hits = await searchFundsForQuery(q, typeFilter, index, (keyword) =>
+    cachedJson(c.env.CACHE, searchCacheKey(keyword), 60 * 60, () => searchFunds(keyword)),
+  );
   const exactHit = /^\d{6}$/.test(q)
     ? hits.find((candidate) => candidate.code === q)
     : undefined;
   if (exactHit) {
     c.executionCtx.waitUntil(
-      syncOfficialNavFromSearchHit(c.env, exactHit).catch((error) => {
-        console.warn(`[fund-search] 共享官方净值预热失败 code=${exactHit.code}`, error);
+      (async () => {
+        await cacheFundMetaFromSearchHit(c.env, exactHit);
+        // 本地列表没有 DWJZ。没有净值时不要写 nav-initial-miss，否则会挡住真正的官方净值同步。
+        if (exactHit.nav !== null && exactHit.navDate !== null) {
+          await syncOfficialNavFromSearchHit(c.env, exactHit);
+        }
+      })().catch((error) => {
+        console.warn(`[fund-search] 共享基金资料预热失败 code=${exactHit.code}`, error);
       }),
     );
   }
