@@ -4,6 +4,7 @@
  */
 
 import type {
+  FundTypeFilter,
   LatestOfficialNav,
   Position,
   Transaction,
@@ -94,8 +95,10 @@ export function logout(): Promise<void> {
   return request('/api/auth/logout', { method: 'POST' });
 }
 
-export function searchFunds(keyword: string): Promise<SearchHit[]> {
-  return get<SearchHit[]>(`/api/funds/search?q=${encodeURIComponent(keyword)}`);
+export function searchFunds(keyword: string, type: FundTypeFilter = 'all'): Promise<SearchHit[]> {
+  const params = new URLSearchParams({ q: keyword });
+  if (type !== 'all') params.set('type', type);
+  return get<SearchHit[]>(`/api/funds/search?${params}`);
 }
 
 export interface HoldingsResponse {
