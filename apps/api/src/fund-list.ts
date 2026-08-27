@@ -68,92 +68,23 @@ export function parseFundListPayload(
 
   const funds: SearchableFund[] = [];
   const seen = new Set<string>();
+  let skipped = 0;
   for (const row of rows) {
     const parsed = FundBrief.safeParse(row);
-    if (!parsed.success) return null;
-    if (seen.has(parsed.data.code)) return null;
+    if (!parsed.success || seen.has(parsed.data.code)) {
+      skipped += 1;
+      continue;
+    }
     seen.add(parsed.data.code);
     funds.push(toSearchable(parsed.data));
   }
+  // 一条脏记录不该让整份 3 万只列表作废；但有效行为 0 时仍返回 null，
+  // 避免把 isolate 里还能用的旧索引换成空列表。
+  if (funds.length === 0) return null;
+  if (skipped > 0) {
+    console.warn(
+      `[资金-list] 跳过 ${skipped} 条非法或重复记录，保留 ${funds.length} 只 key=${FUND_LIST_R2_KEY}`,
+    );
+  }
   return { generatedAt, funds };
-}
-
-function buildIndex(
-  generatedAt: string,
-  funds: SearchableFund[],
-  etag: string | null,
-): FundListIndex {
-  return {
-    generatedAt,
-    etag,
-    funds,
-    byCode: new Map(funds.map((fund) => [fund.code, fund])),
-  };
-}
-
-async function readR2List(env: Env): Promise<{ etag: string | null; index: FundListIndex } | null> {
-  const object = await env.ARCHIVE.get(FUND_LIST_R2_KEY);
-  if (!object) return null;
-  const parsed = parseFundListPayload(await object.json<unknown>());
-  if (!parsed) {
-    console.warn(`[fund-list] R2 对象格式非法 key=${FUND_LIST_R2_KEY}`);
-    return null;
-  }
-  if (parsed.funds.length < 10_000) {
-    // pipeline 下限是 1 万只；低于此数多半是写坏了，但测试夹具和过渡对象仍应可搜。
-    console.warn(`[fund-list] R2 列表只有 ${parsed.funds.length} 只，低于 pipeline 下限 10000`);
-  }
-  return {
-    etag: object.etag ?? null,
-    index: buildIndex(parsed.generatedAt, parsed.funds, object.etag ?? null),
-  };
-}
-
-/**
- * 从 R2 拉全量列表并缓存在 isolate 内存。
- * 不要把整份 JSON 再写入 KV：3.1MB 的 parse 成本正是搜索变慢的原因，
- * 换个存储再 parse 一遍没有意义。
- */
-export async function loadFundSearchIndex(
-  env: Env,
-  now = Date.now(),
-  memory: FundListMemory = isolateMemory,
-): Promise<FundListIndex | null> {
-  if (memory.index && memory.expiresAt > now) return memory.index;
-
-  try {
-    if (memory.index) {
-      const head = await env.ARCHIVE.head(FUND_LIST_R2_KEY);
-      const etag = head?.etag ?? null;
-      if (etag !== null && etag === memory.index.etag) {
-        memory.expiresAt = now + MEMORY_TTL_MS;
-        return memory.index;
-      }
-    }
-  } catch (error) {
-    console.warn(`[fund-list] R2 head 失败，沿用内存中的旧列表 key=${FUND_LIST_R2_KEY}`, error);
-    if (memory.index) return memory.index;
-  }
-
-  try {
-    const loaded = await readR2List(env);
-    if (!loaded) {
-      if (memory.index) {
-        console.warn(`[fund-list] R2 无对象或解析失败，沿用内存中的旧列表 key=${FUND_LIST_R2_KEY}`);
-        return memory.index;
-      }
-      console.warn(`[fund-list] R2 全量列表不可用 key=${FUND_LIST_R2_KEY}`);
-      return null;
-    }
-    memory.index = loaded.index;
-    memory.expiresAt = now + MEMORY_TTL_MS;
-    return loaded.index;
-  } catch (error) {
-    console.warn(`[fund-list] R2 读取失败 key=${FUND_LIST_R2_KEY}`, error);
-    return memory.index;
-  }
-}
-
-export async function getFundSearchIndex(env: Env, now = Date.now()): Promise<FundListIndex | null> {
-  return loadFundSearchIndex(env, now, isolateMemory);
 }
