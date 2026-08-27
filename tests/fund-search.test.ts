@@ -126,7 +126,7 @@ describe('本地搜索匹配', () => {
     expect(codes(searchLocalFunds(funds, '000009', 'stock'))).toEqual(['000009']);
   });
 
-  it('类型筛选会掉掉仅名称命中、类型不符的结果', () => {
+  it('类型筛选会去掉仅名称命中、类型不符的结果', () => {
     expect(codes(searchLocalFunds(funds, '白酒', 'all'))).toEqual(['161725']);
     expect(codes(searchLocalFunds(funds, '白酒', 'bond'))).toEqual([]);
     expect(codes(searchLocalFunds(funds, '白酒', 'index'))).toEqual(['161725']);
