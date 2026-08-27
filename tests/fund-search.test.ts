@@ -87,17 +87,26 @@ describe('全量列表解析', () => {
     expect(parsed?.funds[0]?.isMoneyFund).toBe(false);
   });
 
-  it('缺字段、重复代码或非法代码整份作废', () => {
+  it('外壳坏了才整份作废，脏行和重复代码只跳过', () => {
     expect(parseFundListPayload({ generatedAt: 'x' })).toBeNull();
-    expect(
-      parseFundListPayload({
-        generatedAt: '2026-08-28T00:00:00.000Z',
-        funds: [
-          FIXTURE_FUNDS[0],
-          { ...FIXTURE_FUNDS[0], name: '重复代码' },
-        ],
-      }),
-    ).toBeNull();
+    const withDup = parseFundListPayload({
+      generatedAt: '2026-08-28T00:00:00.000Z',
+      funds: [
+        FIXTURE_FUNDS[0],
+        { ...FIXTURE_FUNDS[0], name: '重复代码' },
+        FIXTURE_FUNDS[1],
+      ],
+    });
+    expect(withDup?.funds.map((fund) => fund.code)).toEqual(['000001', '161725']);
+    const mixed = parseFundListPayload({
+      generatedAt: '2026-08-28T00:00:00.000Z',
+      funds: [
+        { ...FIXTURE_FUNDS[0], code: '51' },
+        FIXTURE_FUNDS[0],
+        { name: '缺代码' },
+      ],
+    });
+    expect(mixed?.funds.map((fund) => fund.code)).toEqual(['000001']);
     expect(
       parseFundListPayload({
         generatedAt: '2026-08-28T00:00:00.000Z',
