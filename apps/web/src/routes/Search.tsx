@@ -3,7 +3,14 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Change } from '../components/Money';
 import { formatNav } from '../lib/format';
+import { FUND_TYPE_FILTERS, type FundTypeFilter } from '@lookthru/shared';
 import { searchFunds, shortType, type SearchHit } from '../lib/api';
+
+/** 与空态热门关键词同一套 chip，选中态复用本页已有的 accent 描边/底。 */
+const CHIP =
+  'rounded-[20px] border border-line-soft bg-raised px-[15px] py-2 text-[13px] text-ink-body';
+const CHIP_ACTIVE =
+  'rounded-[20px] border border-accent/50 bg-accent/12 px-[15px] py-2 text-[13px] text-accent-soft';
 
 const HOT_KEYWORDS = [
   '白酒',
@@ -21,6 +28,7 @@ const HOT_KEYWORDS = [
 export function Search() {
   const [input, setInput] = useState('');
   const [debounced, setDebounced] = useState('');
+  const [typeFilter, setTypeFilter] = useState<FundTypeFilter>('all');
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(input.trim()), 250);
@@ -28,8 +36,8 @@ export function Search() {
   }, [input]);
 
   const { data, isFetching, isError } = useQuery({
-    queryKey: ['search', debounced],
-    queryFn: () => searchFunds(debounced),
+    queryKey: ['search', debounced, typeFilter],
+    queryFn: () => searchFunds(debounced, typeFilter),
     enabled: debounced.length > 0,
     staleTime: 60_000,
   });
@@ -100,6 +108,7 @@ export function Search() {
         <EmptyState onPick={setInput} />
       ) : (
         <div className="flex-1">
+          <TypeFilters value={typeFilter} onChange={setTypeFilter} />
           {isPinyin && (
             <div className="flex items-center gap-1.5 px-0.5 pt-0.5 pb-2">
               <span className="text-[11.5px] text-ink-faint">拼音首字母匹配</span>
@@ -138,6 +147,33 @@ function Hint({ children }: { children: ReactNode }) {
   return <div className="px-0.5 py-6 text-center text-[13px] text-ink-faint">{children}</div>;
 }
 
+function TypeFilters({
+  value,
+  onChange,
+}: {
+  value: FundTypeFilter;
+  onChange: (next: FundTypeFilter) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2.5 px-0.5 pt-0.5 pb-2">
+      {FUND_TYPE_FILTERS.map((filter) => {
+        const active = filter.value === value;
+        return (
+          <button
+            key={filter.value}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(filter.value)}
+            className={active ? CHIP_ACTIVE : CHIP}
+          >
+            {filter.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function EmptyState({ onPick }: { onPick: (kw: string) => void }) {
   return (
     <>
@@ -148,7 +184,7 @@ function EmptyState({ onPick }: { onPick: (kw: string) => void }) {
             key={k}
             type="button"
             onClick={() => onPick(k)}
-            className="rounded-[20px] border border-line-soft bg-raised px-[15px] py-2 text-[13px] text-ink-body"
+            className={CHIP}
           >
             {k}
           </button>
@@ -204,7 +240,7 @@ function ResultRow({ hit, keyword, last }: { hit: SearchHit; keyword: string; la
   );
 }
 
-/** 匹配片段高亮。拼音输入时上游按拼音命中，中文串里找不到，此时不高亮。 */
+/** 匹配片段高亮。拼音输入时按拼音命中，中文名称里找不到对应片段，此时不高亮。 */
 function Highlight({ text, keyword }: { text: string; keyword: string }) {
   const idx = keyword ? text.indexOf(keyword) : -1;
   if (idx === -1) return <>{text}</>;
