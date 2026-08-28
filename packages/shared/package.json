@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./fund-types": "./src/fund-types.ts"
   },
   "dependencies": {
     "zod": "^4.4.3"
