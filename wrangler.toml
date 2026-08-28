@@ -26,6 +26,41 @@ required = ["NOTIFY_KEY"]
 [limits]
 cpu_ms = 30000
 
+# 节点本地的宽松滥用挡板；正常请求不再为计数器往返普通 KV。
+# namespace_id 是本项目在 Cloudflare 账户内分配的稳定数字标识。
+[[ratelimits]]
+name = "PUBLIC_FUNDS_RATE_LIMITER"
+namespace_id = "2026081301"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60
+
+[[ratelimits]]
+name = "PUBLIC_AUTH_RATE_LIMITER"
+namespace_id = "2026081302"
+
+  [ratelimits.simple]
+  limit = 10
+  period = 60
+
+[[ratelimits]]
+name = "PUBLIC_STATUS_RATE_LIMITER"
+namespace_id = "2026081303"
+
+  [ratelimits.simple]
+  limit = 60
+  period = 60
+
+# 旧值命中后的后台刷新按数据键合并，避免并发访客各打一遍上游。
+[[ratelimits]]
+name = "SHARED_REFRESH_RATE_LIMITER"
+namespace_id = "2026081304"
+
+  [ratelimits.simple]
+  limit = 1
+  period = 60
+
 # 正式时刻表（UTC，北京时间 = UTC+8）。探针继续保留，用来发现出口地域漂移。
 # 估值 cron 只能框住小时，scheduled dispatcher 会再收紧到 09:30-11:30 / 13:00-15:00。
 # 官方净值拆成半点与整点两条，避免错误地从北京时间 19:00 开跑。
