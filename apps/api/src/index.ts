@@ -11,8 +11,11 @@ import {
   revokeSession,
   sessionCookie,
 } from './auth';
-import { cachedJson, searchCacheKey } from './cache';
+import { parseFundTypeFilter } from '@lookthru/shared/fund-types';
+import { cachedJsonDeferred, searchCacheKey } from './cache';
 import { runScheduledTask } from './cron';
+import { FUND_LIST_INDEX_HEADER, getFundSearchIndex } from './fund-list';
+import { FUND_LIST_UNAVAILABLE_ERROR, searchFundsForQuery } from './fund-search';
 import {
   confirmTransaction,
   createTransaction,
@@ -29,8 +32,8 @@ import {
   upsertNotifyBinding,
 } from './data/notify';
 import type { Env } from './env';
-import { getCachedHoldings } from './fund-holdings';
-import { getFundMeta } from './fund-meta';
+import { getHoldingsForRequest } from './fund-holdings';
+import { cacheFundMetaFromSearchHit, getFundMeta } from './fund-meta';
 import { syncOfficialNavForFund, syncOfficialNavFromSearchHit } from './nav/sync';
 import { DiscordNotifier, validateDiscordWebhookUrl } from './notify/discord';
 import { buildDailyBrief } from './notify/jobs';
@@ -38,8 +41,7 @@ import { PASS_THRESHOLD, probeStats, runProbe } from './probe';
 import { loadPositionSnapshot } from './positions';
 import { getCachedQuotes, type CachedQuoteResult } from './quote-cache';
 import { getDailyReturns } from './returns';
-import { consumeKvRateLimit } from './rate-limit';
-import { getFundSearchChanges } from './search-changes';
+import { consumeRateLimit } from './rate-limit';
 import { searchFunds } from './sources';
 import { beijingDate, tradingCalendarInfo } from './trading-calendar';
 import { getCachedValuations } from './valuation/service';
@@ -48,7 +50,7 @@ import { loadXRaySnapshot } from './xray/loader';
 
 type AppContext = { Bindings: Env; Variables: { userId: string } };
 
-const app = new Hono<AppContext>();
+export const app = new Hono<AppContext>();
 
 const requireAuth: MiddlewareHandler<AppContext> = async (c, next) => {
   const userId = await authenticateSession(c.env.DB, readSessionToken(c.req.raw));
@@ -155,7 +157,7 @@ function quoteResponse(result: CachedQuoteResult) {
 app.use('/api/funds/*', async (c, next) => {
   const clientId = c.req.header('CF-Connecting-IP') ?? 'local-development';
   try {
-    const allowed = await consumeKvRateLimit(c.env.CACHE, clientId, 'public-funds', Date.now(), 30);
+    const allowed = await consumeRateLimit(c.env.PUBLIC_FUNDS_RATE_LIMITER, clientId);
     if (!allowed) {
       c.header('Retry-After', '60');
       return c.json({ error: 'rate limit exceeded' }, 429);
@@ -174,7 +176,7 @@ app.use('/api/auth/*', async (c, next) => {
   }
   const clientId = c.req.header('CF-Connecting-IP') ?? 'local-development';
   try {
-    const allowed = await consumeKvRateLimit(c.env.CACHE, clientId, 'public-auth', Date.now(), 10);
+    const allowed = await consumeRateLimit(c.env.PUBLIC_AUTH_RATE_LIMITER, clientId);
     if (!allowed) {
       c.header('Retry-After', '60');
       return c.json({ error: 'rate limit exceeded' }, 429);
@@ -193,7 +195,7 @@ app.use('/api/*', async (c, next) => {
   }
   const clientId = c.req.header('CF-Connecting-IP') ?? 'local-development';
   try {
-    const allowed = await consumeKvRateLimit(c.env.CACHE, clientId, 'public-status', Date.now(), 60);
+    const allowed = await consumeRateLimit(c.env.PUBLIC_STATUS_RATE_LIMITER, clientId);
     if (!allowed) {
       c.header('Retry-After', '60');
       return c.json({ error: 'rate limit exceeded' }, 429);
@@ -273,49 +275,107 @@ app.get('/api/funds/search', async (c) => {
   const q = c.req.query('q')?.trim();
   if (!q) return c.json({ error: 'missing q' }, 400);
   if (q.length > 64) return c.json({ error: 'query too long' }, 400);
-  const hits = await cachedJson(c.env.CACHE, searchCacheKey(q), 60 * 60, () => searchFunds(q));
+  const typeFilter = parseFundTypeFilter(c.req.query('type'));
+  if (typeFilter === null) return c.json({ error: 'invalid type' }, 400);
+  const defer = c.executionCtx.waitUntil.bind(c.executionCtx);
+  // 全量列表在 isolate 内存里搜；东财 suggest 只留给本地没有的精确 6 位代码。
+  const { index, stale } = await getFundSearchIndex(c.env);
+  const result = await searchFundsForQuery(q, typeFilter, index, (keyword) =>
+    cachedJsonDeferred(
+      c.env.CACHE,
+      searchCacheKey(keyword),
+      60 * 60,
+      () => searchFunds(keyword, c.req.raw.signal),
+      defer,
+    ),
+    stale,
+  );
+  if (result.degraded && result.hits.length === 0) {
+    return c.json({ error: FUND_LIST_UNAVAILABLE_ERROR, degraded: true }, 503);
+  }
+  if (result.stale) c.header(FUND_LIST_INDEX_HEADER, 'stale');
+  const hits = result.hits;
   const exactHit = /^\d{6}$/.test(q)
     ? hits.find((candidate) => candidate.code === q)
     : undefined;
   if (exactHit) {
     c.executionCtx.waitUntil(
-      syncOfficialNavFromSearchHit(c.env, exactHit).catch((error) => {
-        console.warn(`[fund-search] 共享官方净值预热失败 code=${exactHit.code}`, error);
+      (async () => {
+        await cacheFundMetaFromSearchHit(c.env, exactHit);
+        // 本地列表没有 DWJZ。没有净值时不要写 nav-initial-miss，否则会挡住真正的官方净值同步。
+        if (exactHit.nav !== null && exactHit.navDate !== null) {
+          await syncOfficialNavFromSearchHit(c.env, exactHit);
+        }
+      })().catch((error) => {
+        console.warn(`[fund-search] 共享基金资料预热失败 code=${exactHit.code}`, error);
       }),
     );
   }
-  const regularCodes = hits.filter((hit) => !hit.isMoneyFund).map((hit) => hit.code);
-  const changes = await getFundSearchChanges(c.env.CACHE, regularCodes);
-  return c.json(
-    hits.map((hit) => {
-      const change = changes.get(hit.code);
-      return {
-        ...hit,
-        chgPct: change?.chgPct ?? null,
-        changeTime: change?.fetchedAt ?? null,
-        changeStale: change?.stale ?? false,
-        changeUnavailable: change?.unavailable ?? false,
-      };
+  return c.json(hits);
+});
+
+app.get('/api/funds/:code/detail', async (c) => {
+  const code = c.req.param('code');
+  if (!/^\d{6}$/.test(code)) return c.json({ error: 'bad code' }, 400);
+  const defer = c.executionCtx.waitUntil.bind(c.executionCtx);
+  const [hits, holdings] = await Promise.all([
+    cachedJsonDeferred(
+      c.env.CACHE,
+      searchCacheKey(code),
+      60 * 60,
+      () => searchFunds(code, c.req.raw.signal),
+      defer,
+    ),
+    getHoldingsForRequest(c.env, code, defer, c.req.raw.signal),
+  ]);
+  const fund = hits.find((candidate) => candidate.code === code);
+  if (!fund) return c.json({ error: 'fund not found' }, 404);
+  defer(
+    syncOfficialNavFromSearchHit(c.env, fund).catch((error) => {
+      console.warn(`[fund-detail] 共享官方净值预热失败 code=${code}`, error);
     }),
   );
+  const secids = holdings.data.holdings
+    .map((holding) => holding.secid)
+    .filter((secid): secid is string => secid !== null);
+  const quotes = await getCachedQuotes(c.env, secids, defer);
+  return c.json({
+    fund,
+    holdings: { ...holdings.data, fetchedAt: holdings.fetchedAt, stale: holdings.stale },
+    quotes: {
+      ...quoteResponse(quotes),
+      holdingsReportDate: holdings.data.reportDate,
+      holdingsStale: holdings.stale,
+    },
+  });
 });
 
 app.get('/api/funds/:code/holdings', async (c) => {
   const code = c.req.param('code');
   if (!/^\d{6}$/.test(code)) return c.json({ error: 'bad code' }, 400);
-  const snapshot = await getCachedHoldings(c.env, code);
+  const snapshot = await getHoldingsForRequest(
+    c.env,
+    code,
+    c.executionCtx.waitUntil.bind(c.executionCtx),
+    c.req.raw.signal,
+  );
   return c.json({ ...snapshot.data, fetchedAt: snapshot.fetchedAt, stale: snapshot.stale });
 });
 
 app.get('/api/funds/:code/quotes', async (c) => {
   const code = c.req.param('code');
   if (!/^\d{6}$/.test(code)) return c.json({ error: 'bad code' }, 400);
-  const holdings = await getCachedHoldings(c.env, code);
+  const holdings = await getHoldingsForRequest(
+    c.env,
+    code,
+    c.executionCtx.waitUntil.bind(c.executionCtx),
+    c.req.raw.signal,
+  );
   const secids = holdings.data.holdings
     .map((holding) => holding.secid)
     .filter((secid): secid is string => secid !== null);
   return c.json({
-    ...quoteResponse(await getCachedQuotes(c.env, secids)),
+    ...quoteResponse(await getCachedQuotes(c.env, secids, c.executionCtx.waitUntil.bind(c.executionCtx))),
     holdingsReportDate: holdings.data.reportDate,
     holdingsStale: holdings.stale,
   });
@@ -329,7 +389,9 @@ app.get('/api/quotes', async (c) => {
     return c.json({ error: 'bad secid' }, 400);
   }
   // provider / delayed / stale 必须回给前端：延时或旧行情不能当实时展示。
-  return c.json(quoteResponse(await getCachedQuotes(c.env, secids)));
+  return c.json(
+    quoteResponse(await getCachedQuotes(c.env, secids, c.executionCtx.waitUntil.bind(c.executionCtx))),
+  );
 });
 
 app.get('/api/valuations', async (c) => {
@@ -412,7 +474,15 @@ app.get('/api/positions', async (c) => {
   return c.json(snapshot);
 });
 
-app.get('/api/xray', async (c) => c.json(await loadXRaySnapshot(c.env, c.get('userId'))));
+app.get('/api/xray', async (c) =>
+  c.json(
+    await loadXRaySnapshot(
+      c.env,
+      c.get('userId'),
+      c.executionCtx.waitUntil.bind(c.executionCtx),
+    ),
+  ),
+);
 
 app.get('/api/returns', async (c) => {
   const to = dateSchema.safeParse(c.req.query('to') ?? beijingDate(Date.now()));

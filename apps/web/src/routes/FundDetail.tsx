@@ -8,10 +8,8 @@ import { ErrorState, FreshnessLine } from '../components/states';
 import { Card, IconCircle, InfoBar, WarnBar } from '../components/ui';
 import {
   createTransaction,
-  fetchFundQuotes,
-  fetchHoldings,
+  fetchFundDetail,
   fetchPositions,
-  searchFunds,
   shortType,
   type CreateTransactionInput,
 } from '../lib/api';
@@ -34,19 +32,9 @@ export function FundDetail() {
   const session = useSessionQuery();
   const [editingPosition, setEditingPosition] = useState(false);
   const validCode = code && /^\d{6}$/.test(code) ? code : null;
-  const info = useQuery({
-    queryKey: ['fund-search-exact', validCode],
-    queryFn: async () => (await searchFunds(validCode!)).find((hit) => hit.code === validCode) ?? null,
-    enabled: validCode !== null,
-  });
-  const holdings = useQuery({
-    queryKey: ['fund-holdings', validCode],
-    queryFn: () => fetchHoldings(validCode!),
-    enabled: validCode !== null,
-  });
-  const quotes = useQuery({
-    queryKey: ['fund-quotes', validCode],
-    queryFn: () => fetchFundQuotes(validCode!),
+  const detail = useQuery({
+    queryKey: ['fund-detail', validCode],
+    queryFn: ({ signal }) => fetchFundDetail(validCode!, signal),
     enabled: validCode !== null,
     refetchInterval: 60_000,
   });
@@ -55,11 +43,12 @@ export function FundDetail() {
     queryFn: fetchPositions,
     enabled: session.data !== undefined,
   });
-  const fund = info.data;
+  const fund = detail.data?.fund;
+  const holdings = detail.data?.holdings;
+  const quotes = detail.data?.quotes;
   const position = positions.data?.positions.find((candidate) => candidate.fundCode === validCode);
-  const loading = info.isPending || holdings.isPending || quotes.isPending;
-  const coldError =
-    validCode === null || info.isError || holdings.isError || quotes.isError || (!loading && !fund);
+  const loading = detail.isPending;
+  const coldError = validCode === null || detail.isError || (!loading && !fund);
 
   const bottomBar = validCode ? (
     <ActionBar
@@ -79,16 +68,14 @@ export function FundDetail() {
     );
   }
 
-  if (coldError || !fund || !holdings.data || !quotes.data) {
+  if (coldError || !fund || !holdings || !quotes) {
     return (
       <SubPage bottomBar={bottomBar}>
         <DetailHeader onBack={() => navigate(-1)} />
         <ErrorState
           description={validCode === null ? '基金代码格式非法。' : '基金资料或持仓披露暂时不可用。'}
           onRetry={() => {
-            void info.refetch();
-            void holdings.refetch();
-            void quotes.refetch();
+            void detail.refetch();
           }}
         />
       </SubPage>
@@ -97,8 +84,8 @@ export function FundDetail() {
 
   const valuation = position?.valuation ?? null;
   const presentedPosition = position ? positionPresentation(position) : null;
-  const quoteBySecid = quotes.data.quotes;
-  const reportAge = holdings.data.reportDate ? staleDays(holdings.data.reportDate) : null;
+  const quoteBySecid = quotes.quotes;
+  const reportAge = holdings.reportDate ? staleDays(holdings.reportDate) : null;
 
   return (
     <SubPage bottomBar={bottomBar}>
@@ -190,13 +177,13 @@ export function FundDetail() {
           )}
         </div>
         <div className="mb-3 text-[11px] text-ink-faint">
-          报告期 {holdings.data.reportDate ?? '未知'} · 覆盖基金净值 {holdings.data.coverageWeight.toFixed(2)}%
+          报告期 {holdings.reportDate ?? '未知'} · 覆盖基金净值 {holdings.coverageWeight.toFixed(2)}%
         </div>
-        {(holdings.data.stale || quotes.data.holdingsStale || quotes.data.delayed) && (
+        {(holdings.stale || quotes.holdingsStale || quotes.delayed) && (
           <div className="mb-3">
             <WarnBar>
-              {holdings.data.stale || quotes.data.holdingsStale ? '当前使用陈旧持仓披露；' : ''}
-              {quotes.data.delayed ? '股票行情来自延时源' : ''}
+              {holdings.stale || quotes.holdingsStale ? '当前使用陈旧持仓披露；' : ''}
+              {quotes.delayed ? '股票行情来自延时源' : ''}
             </WarnBar>
           </div>
         )}
@@ -205,11 +192,11 @@ export function FundDetail() {
           <div className="w-[70px] text-right">占净值比</div>
           <div className="w-[60px] text-right">当日</div>
         </div>
-        {holdings.data.holdings.map((holding, index) => (
+        {holdings.holdings.map((holding, index) => (
           <div
             key={holding.stockCode}
             className={`flex items-center py-[11px] ${
-              index < holdings.data.holdings.length - 1 ? 'border-b border-line-faint' : ''
+              index < holdings.holdings.length - 1 ? 'border-b border-line-faint' : ''
             }`}
           >
             <div className="flex-[1.5]">
@@ -226,15 +213,15 @@ export function FundDetail() {
           </div>
         ))}
         <FreshnessLine
-          at={quotes.data.fetchedAt}
-          onRetry={() => void quotes.refetch()}
-          liveNote={`行情源 ${quotes.data.provider ?? '不可用'}`}
+          at={quotes.fetchedAt}
+          onRetry={() => void detail.refetch()}
+          liveNote={`行情源 ${quotes.provider ?? '不可用'}`}
         />
       </Card>
 
       <div className="mt-3.5">
         <InfoBar>
-          前十大持仓只覆盖基金净值的 {holdings.data.coverageWeight.toFixed(2)}%，未披露部分不纳入股票敞口。
+          前十大持仓只覆盖基金净值的 {holdings.coverageWeight.toFixed(2)}%，未披露部分不纳入股票敞口。
         </InfoBar>
       </div>
 

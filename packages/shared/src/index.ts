@@ -14,6 +14,14 @@ export const FundBrief = z.object({
 });
 export type FundBrief = z.infer<typeof FundBrief>;
 
+export {
+  FUND_TYPE_FILTERS,
+  isFundTypeFilter,
+  parseFundTypeFilter,
+  fundMatchesTypeFilter,
+  type FundTypeFilter,
+} from './fund-types';
+
 export const NavPoint = z.object({
   /** YYYY-MM-DD */
   date: z.string(),

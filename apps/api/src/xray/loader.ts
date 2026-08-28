@@ -1,7 +1,7 @@
 import type { Transaction } from '@lookthru/shared';
 import { listTransactions } from '../data/transactions';
-import type { Env } from '../env';
-import { getCachedHoldings } from '../fund-holdings';
+import type { Defer, Env } from '../env';
+import { getHoldingsForRequest } from '../fund-holdings';
 import { loadPositionSnapshot } from '../positions';
 import { getCachedQuotes } from '../quote-cache';
 import { beijingDate } from '../trading-calendar';
@@ -52,6 +52,7 @@ export interface XRaySnapshot extends XRayResult {
 export async function loadXRaySnapshot(
   env: Env,
   userId: string,
+  defer: Defer,
   asOfMs = Date.now(),
 ): Promise<XRaySnapshot> {
   const [positionSnapshot, transactions] = await Promise.all([
@@ -66,14 +67,14 @@ export async function loadXRaySnapshot(
     );
   });
   const holdingsSnapshots = await Promise.all(
-    availablePositions.map((position) => getCachedHoldings(env, position.fundCode)),
+    availablePositions.map((position) => getHoldingsForRequest(env, position.fundCode, defer)),
   );
   const secids = holdingsSnapshots.flatMap((snapshot) =>
     snapshot.data.holdings
       .map((holding) => holding.secid)
       .filter((secid): secid is string => secid !== null),
   );
-  const quotes = await getCachedQuotes(env, secids);
+  const quotes = await getCachedQuotes(env, secids, defer);
   const heldDays = heldDaysByFund(transactions, asOfMs);
   const funds = availablePositions.map((position, index) => {
     const valuation = position.valuation;

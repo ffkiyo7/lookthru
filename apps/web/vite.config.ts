@@ -27,15 +27,24 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,woff2}'],
-        // API 响应不进预缓存，由 TanStack Query 管理；离线时展示上次持仓
+        // API 响应不进预缓存。运行时缓存只负责弱网/离线回退，在线新鲜度仍由 API 与 TanStack Query 控制。
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
           {
-            urlPattern: /^\/api\/(portfolio|funds)\//,
+            // Workbox 用完整 URL 匹配 RegExp；不能以 `/api` 开头，否则这条规则永远不会命中。
+            urlPattern: /\/api\/funds\/search(?:\?|$)/,
+            handler: 'StaleWhileRevalidate',
+            options: {
+              cacheName: 'lookthru-fund-search',
+              expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 },
+            },
+          },
+          {
+            urlPattern: /\/api\/funds\/\d{6}\/(?:detail|holdings|quotes)(?:\?|$)/,
             handler: 'NetworkFirst',
             options: {
               cacheName: 'lookthru-api',
-              networkTimeoutSeconds: 5,
+              networkTimeoutSeconds: 2,
               expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 7 },
             },
           },

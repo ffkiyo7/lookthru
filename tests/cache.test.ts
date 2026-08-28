@@ -1,4 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const fetchQuotesResilientMock = vi.hoisted(() => vi.fn());
+vi.mock('../apps/api/src/sources/quotes', () => ({
+  fetchQuotesResilient: fetchQuotesResilientMock,
+}));
+
 import { cachedJson } from '../apps/api/src/cache';
 import {
   expiredSessionCookie,
@@ -7,8 +13,8 @@ import {
   readSessionToken,
   sessionCookie,
 } from '../apps/api/src/auth';
-import { getFundSearchChanges } from '../apps/api/src/search-changes';
-import { consumeKvRateLimit } from '../apps/api/src/rate-limit';
+import { consumeRateLimit } from '../apps/api/src/rate-limit';
+import { cacheQuoteResult, getCachedQuotes } from '../apps/api/src/quote-cache';
 import { isPublicApiRequest } from '../apps/api/src/index';
 
 class FakeKV {
@@ -25,6 +31,24 @@ class FakeKV {
 
   delete(key: string): void {
     this.values.delete(key);
+  }
+
+  read<T>(key: string): T | null {
+    const value = this.values.get(key);
+    return value === undefined ? null : (JSON.parse(value) as T);
+  }
+}
+
+class FakeRateLimiter {
+  private counts = new Map<string, number>();
+
+  constructor(private readonly limitValue: number) {}
+
+  async limit({ key }: { key: string }): Promise<{ success: boolean }> {
+    const count = this.counts.get(key) ?? 0;
+    if (count >= this.limitValue) return { success: false };
+    this.counts.set(key, count + 1);
+    return { success: true };
   }
 }
 
@@ -70,61 +94,13 @@ describe('cachedJson', () => {
   it('兼容旧版裸 JSON 缓存', async () => {
     const cache = new FakeKV();
     await cache.put('legacy', JSON.stringify({ ok: true }));
-    const value = await cachedJson(cache as never, 'legacy', 60, async () => ({ ok: false }));
+    const value = await cachedJson(
+      cache as never,
+      'legacy',
+      60,
+      async () => ({ ok: false }),
+    );
     expect(value).toEqual({ ok: true });
-  });
-});
-
-describe('搜索涨跌幅缓存', () => {
-  it('基金信息缓存之外按代码共享 60 秒行情，并保留 last-known-good', async () => {
-    const cache = new FakeKV();
-    let loads = 0;
-    const load = async () => {
-      loads++;
-      return new Map([
-        [
-          '000001',
-          {
-            code: '000001',
-            unitNav: 1.01,
-            accNav: 1.01,
-            prevNav: 1,
-            date: '2026-08-12',
-          },
-        ],
-      ]);
-    };
-
-    const first = await getFundSearchChanges(cache as never, ['000001'], load);
-    expect(first.get('000001')).toMatchObject({ chgPct: 1, stale: false, unavailable: false });
-    await getFundSearchChanges(cache as never, ['000001'], load);
-    expect(loads).toBe(1);
-
-    cache.delete('search-change:000001');
-    const stale = await getFundSearchChanges(cache as never, ['000001'], async () => {
-      throw new Error('sina unavailable');
-    });
-    expect(stale.get('000001')).toMatchObject({ chgPct: 1, stale: true, unavailable: false });
-  });
-
-  it('上游失败且没有 last-known-good 时保留搜索结果并明确标成不可用', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    try {
-      await expect(
-        getFundSearchChanges(new FakeKV() as never, ['000001'], async () => {
-          throw new Error('sina unavailable');
-        }),
-      ).resolves.toEqual(
-        new Map([
-          [
-            '000001',
-            { chgPct: null, fetchedAt: null, stale: false, unavailable: true },
-          ],
-        ]),
-      );
-    } finally {
-      warn.mockRestore();
-    }
   });
 });
 
@@ -140,22 +116,102 @@ describe('公开基金接口限流', () => {
     expect(isPublicApiRequest('GET', '/api/new-route-added-later')).toBe(false);
   });
 
-  it('同一 IP 每分钟第 31 次返回超限，不同 IP 与下一分钟独立计数', async () => {
-    const cache = new FakeKV();
-    const now = Date.parse('2026-08-12T00:00:30Z');
+  it('同一匿名来源第 31 次返回超限，不同来源使用独立确定性键', async () => {
+    const limiter = new FakeRateLimiter(30);
     for (let request = 1; request <= 30; request++) {
       await expect(
-        consumeKvRateLimit(cache as never, '203.0.113.1', 'public-funds', now, 30),
+        consumeRateLimit(limiter as never, '203.0.113.1'),
       ).resolves.toBe(true);
     }
     await expect(
-      consumeKvRateLimit(cache as never, '203.0.113.1', 'public-funds', now, 30),
+      consumeRateLimit(limiter as never, '203.0.113.1'),
     ).resolves.toBe(false);
     await expect(
-      consumeKvRateLimit(cache as never, '203.0.113.2', 'public-funds', now, 30),
+      consumeRateLimit(limiter as never, '203.0.113.2'),
     ).resolves.toBe(true);
-    await expect(
-      consumeKvRateLimit(cache as never, '203.0.113.1', 'public-funds', now + 60_000, 30),
-    ).resolves.toBe(true);
+  });
+});
+
+describe('行情 stale-while-revalidate 缓存', () => {
+  beforeEach(() => {
+    fetchQuotesResilientMock.mockReset();
+  });
+
+  it('Cron 抓到的行情同时写入热缓存和 last-known-good', async () => {
+    const cache = new FakeKV();
+    await cacheQuoteResult(
+      { CACHE: cache } as never,
+      {
+        provider: 'tencent',
+        delayed: false,
+        attempts: [],
+        quotes: new Map([
+          [
+            '1.600519',
+            {
+              secid: '1.600519',
+              code: '600519',
+              name: '',
+              price: 1_500,
+              chgPct: 1,
+              prevClose: 1_485,
+            },
+          ],
+        ]),
+      },
+    );
+
+    expect(cache.read('quote:1.600519')).toMatchObject({ provider: 'tencent' });
+    expect(cache.read('quote-lkg:1.600519')).toMatchObject({ provider: 'tencent' });
+  });
+
+  it('热缓存过期时立即返回旧行情，并在后台刷新下一次请求', async () => {
+    const cache = new FakeKV();
+    const env = {
+      CACHE: cache,
+      SHARED_REFRESH_RATE_LIMITER: new FakeRateLimiter(1),
+    };
+    const oldQuote = {
+      secid: '1.600519',
+      code: '600519',
+      name: '',
+      price: 1_400,
+      chgPct: -1,
+      prevClose: 1_414,
+    };
+    await cache.put(
+      'quote-lkg:1.600519',
+      JSON.stringify({
+        quote: oldQuote,
+        provider: 'sina',
+        delayed: false,
+        fetchedAt: '2026-08-13T00:00:00.000Z',
+      }),
+    );
+    fetchQuotesResilientMock.mockResolvedValueOnce({
+      provider: 'tencent',
+      delayed: false,
+      attempts: [],
+      quotes: new Map([['1.600519', { ...oldQuote, price: 1_500, chgPct: 1 }]]),
+    });
+    const deferred: Promise<unknown>[] = [];
+
+    const first = await getCachedQuotes(
+      env as never,
+      ['1.600519'],
+      (task) => deferred.push(task),
+    );
+    expect(first.quotes.get('1.600519')?.price).toBe(1_400);
+    expect(first.staleSecids).toEqual(['1.600519']);
+
+    await Promise.all(deferred);
+    const second = await getCachedQuotes(
+      env as never,
+      ['1.600519'],
+      (task) => deferred.push(task),
+    );
+    expect(second.quotes.get('1.600519')?.price).toBe(1_500);
+    expect(second.staleSecids).toEqual([]);
+    expect(fetchQuotesResilientMock).toHaveBeenCalledTimes(1);
   });
 });

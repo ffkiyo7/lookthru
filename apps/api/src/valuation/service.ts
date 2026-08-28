@@ -15,7 +15,8 @@ import {
 } from '../data/navs';
 import type { Env } from '../env';
 import { getFundMeta } from '../fund-meta';
-import { getCachedHoldings } from '../fund-holdings';
+import { getFreshHoldings } from '../fund-holdings';
+import { cacheQuoteResult } from '../quote-cache';
 import {
   fetchFundBenchmark,
   fetchPingzhongData,
@@ -119,7 +120,7 @@ export async function refreshValuationInput(env: Env, code: string): Promise<Val
   } else {
     const [profile, holdingsSnapshot] = await Promise.all([
       fetchPingzhongData(code),
-      getCachedHoldings(env, code),
+      getFreshHoldings(env, code),
     ]);
     const holdings = holdingsSnapshot.data;
     let matchedBenchmark = null;
@@ -224,6 +225,7 @@ export async function runValuationCycle(
 
   const quoteSecids = [...new Set(inputs.flatMap(requiredQuoteSecids))];
   const quoteResult = await fetchQuotesResilient(quoteSecids);
+  await cacheQuoteResult(env, quoteResult);
   const quoteChainFailure =
     quoteSecids.length > 0 && quoteResult.quotes.size === 0
       ? `估值行情全链失败: ${quoteResult.attempts
