@@ -4,18 +4,19 @@
  */
 
 import type {
-  FundTypeFilter,
   LatestOfficialNav,
   Position,
   Transaction,
   TransactionStatus,
   TransactionType,
 } from '@lookthru/shared';
+import type { FundTypeFilter } from '@lookthru/shared/fund-types';
 
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    public readonly body: unknown = null,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -33,11 +34,6 @@ export interface SearchHit {
   navDate: string | null;
   company: string | null;
   isMoneyFund: boolean;
-  /** 与一小时基金信息缓存分离，按 60 秒刷新；上游故障时会标陈旧或不可用。 */
-  chgPct: number | null;
-  changeTime: string | null;
-  changeStale: boolean;
-  changeUnavailable: boolean;
 }
 
 /** 「混合型-偏股」→「混合型」，列表里只显示大类 */
@@ -51,20 +47,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { ...init, headers, credentials: 'same-origin' });
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
+    let body: unknown = null;
     try {
-      const body = (await res.json()) as { error?: unknown };
-      if (typeof body.error === 'string') message = body.error;
+      body = (await res.json()) as { error?: unknown };
+      if (typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string') {
+        message = body.error;
+      }
     } catch {
       // 错误响应不是 JSON 时保留 HTTP 状态；不能把解析失败伪装成成功。
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, body);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
-function get<T>(path: string): Promise<T> {
-  return request<T>(path);
+function get<T>(path: string, init?: RequestInit): Promise<T> {
+  return request<T>(path, init);
 }
 
 function json<T>(path: string, method: 'POST' | 'PUT', body: unknown): Promise<T> {
@@ -95,10 +94,38 @@ export function logout(): Promise<void> {
   return request('/api/auth/logout', { method: 'POST' });
 }
 
-export function searchFunds(keyword: string, type: FundTypeFilter = 'all'): Promise<SearchHit[]> {
+export interface SearchFundsResult {
+  hits: SearchHit[];
+  stale: boolean;
+}
+
+export async function searchFunds(
+  keyword: string,
+  type: FundTypeFilter = 'all',
+  signal?: AbortSignal,
+): Promise<SearchFundsResult> {
   const params = new URLSearchParams({ q: keyword });
   if (type !== 'all') params.set('type', type);
-  return get<SearchHit[]>(`/api/funds/search?${params}`);
+  const headers = new Headers();
+  headers.set('Accept', 'application/json');
+  const res = await fetch(`/api/funds/search?${params}`, { headers, credentials: 'same-origin', signal });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    let body: unknown = null;
+    try {
+      body = (await res.json()) as { error?: unknown };
+      if (typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string') {
+        message = body.error;
+      }
+    } catch {
+      // 错误响应不是 JSON 时保留 HTTP 状态；不能把解析失败伪装成成功。
+    }
+    throw new ApiError(res.status, message, body);
+  }
+  return {
+    hits: (await res.json()) as SearchHit[],
+    stale: res.headers.get('X-Lookthru-Index') === 'stale',
+  };
 }
 
 export interface HoldingsResponse {
@@ -108,10 +135,6 @@ export interface HoldingsResponse {
   industries: { code: string; name: string; weight: number }[];
   fetchedAt: string;
   stale: boolean;
-}
-
-export function fetchHoldings(code: string): Promise<HoldingsResponse> {
-  return get<HoldingsResponse>(`/api/funds/${code}/holdings`);
 }
 
 export interface Quote {
@@ -135,15 +158,14 @@ export interface QuoteResponse {
   quotes: Record<string, Quote>;
 }
 
-export function fetchQuotes(secids: string[]): Promise<QuoteResponse> {
-  return get<QuoteResponse>(`/api/quotes?secids=${secids.join(',')}`);
+export interface FundDetailResponse {
+  fund: SearchHit;
+  holdings: HoldingsResponse;
+  quotes: QuoteResponse & { holdingsReportDate: string | null; holdingsStale: boolean };
 }
 
-/** 公开基金详情只能取该基金披露持仓对应的行情，不能传任意 secid。 */
-export function fetchFundQuotes(code: string): Promise<
-  QuoteResponse & { holdingsReportDate: string | null; holdingsStale: boolean }
-> {
-  return get(`/api/funds/${code}/quotes`);
+export function fetchFundDetail(code: string, signal?: AbortSignal): Promise<FundDetailResponse> {
+  return get<FundDetailResponse>(`/api/funds/${code}/detail`, { signal });
 }
 
 export interface PositionsResponse {
