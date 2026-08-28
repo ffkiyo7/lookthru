@@ -1,13 +1,23 @@
 import {
   fundMatchesTypeFilter,
   type FundTypeFilter,
-} from '@lookthru/shared';
+} from '@lookthru/shared/fund-types';
 import type { FundListIndex, SearchableFund } from './fund-list';
 import type { FundSearchHit } from './sources/eastmoney';
 
 export const LOCAL_SEARCH_LIMIT = 30;
 
+export const FUND_LIST_UNAVAILABLE_ERROR = 'fund list unavailable';
+
 export type LocalMatchKind = 'code' | 'pinyin' | 'name';
+
+export interface SearchQueryResult {
+  hits: FundSearchHit[];
+  /** 冷启动且没有可用索引。名称/拼音必须 503，不能伪装成「未找到」。 */
+  degraded: boolean;
+  /** isolate 正在用 last-known-good，刷新失败。响应仍是 200 数组。 */
+  stale: boolean;
+}
 
 /**
  * 只有完整 6 位代码、且本地列表里没有这只基金时，才允许打东财 suggest。
@@ -96,12 +106,32 @@ export async function searchFundsForQuery(
   typeFilter: FundTypeFilter,
   index: FundListIndex | null,
   searchUpstream: (keyword: string) => Promise<FundSearchHit[]>,
-): Promise<FundSearchHit[]> {
+  stale = false,
+): Promise<SearchQueryResult> {
   if (index) {
     const local = searchLocalFunds(index.funds, query, typeFilter);
-    if (local.length > 0) return local;
+    if (local.length > 0) return { hits: local, degraded: false, stale };
+    if (!shouldUseEastMoneyFallback(query, index)) {
+      return { hits: [], degraded: false, stale };
+    }
+    const upstream = await searchUpstream(query);
+    return {
+      hits: upstream.filter((hit) => hit.code === query),
+      degraded: false,
+      stale,
+    };
   }
-  if (!shouldUseEastMoneyFallback(query, index)) return [];
-  const upstream = await searchUpstream(query);
-  return upstream.filter((hit) => hit.code === query);
+
+  if (shouldUseEastMoneyFallback(query, null)) {
+    try {
+      const upstream = await searchUpstream(query);
+      const hits = upstream.filter((hit) => hit.code === query);
+      if (hits.length > 0) return { hits, degraded: false, stale: false };
+    } catch (error) {
+      console.warn('[fund-search] 无本地索引时东财回源失败', error);
+    }
+    return { hits: [], degraded: true, stale: false };
+  }
+
+  return { hits: [], degraded: true, stale: false };
 }
