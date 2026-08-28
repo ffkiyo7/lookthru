@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import type { Env } from './env';
+import type { Defer, Env } from './env';
+import { consumeRateLimit } from './rate-limit';
 import { fetchHoldings } from './sources/eastmoney';
 
 const HOT_TTL_SECONDS = 6 * 60 * 60;
@@ -31,6 +32,7 @@ const Envelope = z.object({
   data: Holdings,
   fetchedAt: z.string().datetime(),
 });
+type Envelope = z.infer<typeof Envelope>;
 
 const ArchivedHoldings = Holdings.extend({
   generatedAt: z.string().datetime(),
@@ -43,7 +45,7 @@ export interface HoldingsSnapshot {
   stale: boolean;
 }
 
-async function readEnvelope(cache: KVNamespace, key: string): Promise<z.infer<typeof Envelope> | null> {
+async function readEnvelope(cache: KVNamespace, key: string): Promise<Envelope | null> {
   const raw = await cache.get<unknown>(key, 'json');
   if (raw === null) return null;
   const parsed = Envelope.safeParse(raw);
@@ -54,7 +56,7 @@ async function readEnvelope(cache: KVNamespace, key: string): Promise<z.infer<ty
   return parsed.data;
 }
 
-async function readArchive(env: Env, code: string): Promise<z.infer<typeof Envelope> | null> {
+async function readArchive(env: Env, code: string): Promise<Envelope | null> {
   const object = await env.ARCHIVE.get(`holdings/${code}/latest.json`);
   if (!object) return null;
   const archived = ArchivedHoldings.parse(await object.json<unknown>());
@@ -64,43 +66,109 @@ async function readArchive(env: Env, code: string): Promise<z.infer<typeof Envel
   return { data: Holdings.parse(archived), fetchedAt: archived.generatedAt };
 }
 
-export async function getCachedHoldings(env: Env, code: string): Promise<HoldingsSnapshot> {
-  const hotKey = `holdings:${code}`;
-  const lastKnownKey = `holdings-lkg:${code}`;
+async function fetchHoldingsEnvelope(code: string, signal?: AbortSignal): Promise<Envelope> {
+  return {
+    data: Holdings.parse(await fetchHoldings(code, signal)),
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+async function cacheHoldings(env: Env, code: string, envelope: Envelope): Promise<void> {
+  const serialized = JSON.stringify(envelope);
+  const writes = await Promise.allSettled([
+    env.CACHE.put(`holdings:${code}`, serialized, { expirationTtl: HOT_TTL_SECONDS }),
+    env.CACHE.put(`holdings-lkg:${code}`, serialized, { expirationTtl: LAST_KNOWN_TTL_SECONDS }),
+  ]);
+  for (const write of writes) {
+    if (write.status === 'rejected') {
+      console.error(`[holdings] KV 写入失败 code=${code}`, write.reason);
+    }
+  }
+}
+
+function refreshHoldingsInBackground(env: Env, code: string, defer: Defer): void {
+  defer(
+    (async () => {
+      try {
+        const allowed = await consumeRateLimit(
+          env.SHARED_REFRESH_RATE_LIMITER,
+          `holdings:${code}`,
+        );
+        if (!allowed) return;
+        await cacheHoldings(env, code, await fetchHoldingsEnvelope(code));
+      } catch (error) {
+        console.error(`[holdings] 后台刷新失败 code=${code}`, error);
+      }
+    })(),
+  );
+}
+
+async function readLocalFallback(env: Env, code: string): Promise<Envelope | null> {
   try {
-    const hot = await readEnvelope(env.CACHE, hotKey);
+    const lastKnown = await readEnvelope(env.CACHE, `holdings-lkg:${code}`);
+    if (lastKnown) return lastKnown;
+  } catch (error) {
+    console.error(`[holdings] last-known-good 读取失败 code=${code}`, error);
+  }
+  try {
+    return await readArchive(env, code);
+  } catch (error) {
+    console.error(`[holdings] R2 归档读取失败 code=${code}`, error);
+    return null;
+  }
+}
+
+/**
+ * 用户请求走本地优先：热 KV → last-known-good → R2。命中旧值后立即返回，
+ * 上游刷新由 waitUntil 完成。只有从未见过的基金才同步等待一次东财。
+ */
+export async function getHoldingsForRequest(
+  env: Env,
+  code: string,
+  defer: Defer,
+  signal?: AbortSignal,
+): Promise<HoldingsSnapshot> {
+  try {
+    const hot = await readEnvelope(env.CACHE, `holdings:${code}`);
     if (hot) return { ...hot, stale: false };
   } catch (error) {
-    console.warn(`[holdings] 热缓存读取失败 code=${code}`, error);
+    console.error(`[holdings] 热缓存读取失败 code=${code}`, error);
+  }
+
+  const local = await readLocalFallback(env, code);
+  if (local) {
+    refreshHoldingsInBackground(env, code, defer);
+    return { ...local, stale: true };
   }
 
   try {
-    const data = Holdings.parse(await fetchHoldings(code));
-    const envelope = { data, fetchedAt: new Date().toISOString() };
-    const serialized = JSON.stringify(envelope);
-    const writes = await Promise.allSettled([
-      env.CACHE.put(hotKey, serialized, { expirationTtl: HOT_TTL_SECONDS }),
-      env.CACHE.put(lastKnownKey, serialized, { expirationTtl: LAST_KNOWN_TTL_SECONDS }),
-    ]);
-    if (writes.some((result) => result.status === 'rejected')) {
-      console.warn(`[holdings] 缓存写入不完整 code=${code}`);
-    }
-    return { ...envelope, stale: false };
+    const fresh = await fetchHoldingsEnvelope(code, signal);
+    defer(cacheHoldings(env, code, fresh));
+    return { ...fresh, stale: false };
   } catch (error) {
-    try {
-      const lastKnown = await readEnvelope(env.CACHE, lastKnownKey);
-      if (lastKnown) {
-        console.warn(`[holdings] 上游失败，返回 last-known-good code=${code}`, error);
-        return { ...lastKnown, stale: true };
-      }
-      const archived = await readArchive(env, code);
-      if (archived) {
-        console.warn(`[holdings] 上游失败，返回 R2 归档 code=${code}`, error);
-        return { ...archived, stale: true };
-      }
-    } catch (cacheError) {
-      throw new AggregateError([error, cacheError], `持仓与 last-known-good 均不可用 code=${code}`);
+    throw new Error(`持仓上游失败且没有本地数据 code=${code}`, { cause: error });
+  }
+}
+
+/** 定时估值需要主动刷新过期热缓存，失败时仍可使用本地旧值继续并明确降级。 */
+export async function getFreshHoldings(env: Env, code: string): Promise<HoldingsSnapshot> {
+  try {
+    const hot = await readEnvelope(env.CACHE, `holdings:${code}`);
+    if (hot) return { ...hot, stale: false };
+  } catch (error) {
+    console.error(`[holdings] 热缓存读取失败 code=${code}`, error);
+  }
+
+  try {
+    const fresh = await fetchHoldingsEnvelope(code);
+    await cacheHoldings(env, code, fresh);
+    return { ...fresh, stale: false };
+  } catch (upstreamError) {
+    const local = await readLocalFallback(env, code);
+    if (local) {
+      console.warn(`[holdings] 上游失败，使用本地旧值 code=${code}`, upstreamError);
+      return { ...local, stale: true };
     }
-    throw new Error(`持仓上游失败且没有 last-known-good code=${code}`, { cause: error });
+    throw new Error(`持仓上游失败且没有本地数据 code=${code}`, { cause: upstreamError });
   }
 }
