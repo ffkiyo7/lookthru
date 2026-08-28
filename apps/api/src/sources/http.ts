@@ -28,6 +28,8 @@ export interface FetchOptions {
   source: string;
   /** 部分东财端点返回 GBK，需按 latin1 读取后只取数值字段 */
   decodeAs?: 'utf-8' | 'latin1';
+  /** 调用方取消或整条降级链预算耗尽时，中止正在进行的上游请求。 */
+  signal?: AbortSignal;
 }
 
 export interface FetchResult {
@@ -52,7 +54,7 @@ async function waitForOriginSlot(url: string): Promise<void> {
 }
 
 export async function fetchText(url: string, opts: FetchOptions): Promise<FetchResult> {
-  const { timeoutMs = 12_000, retries = 2, source, referer, decodeAs = 'utf-8' } = opts;
+  const { timeoutMs = 12_000, retries = 2, source, referer, decodeAs = 'utf-8', signal } = opts;
   let lastErr: unknown;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -65,13 +67,16 @@ export async function fetchText(url: string, opts: FetchOptions): Promise<FetchR
       // 会绕过“礼貌限流”，用户增长后静默变成高频抓取器。
       await waitForOriginSlot(url);
       const started = Date.now();
+      const requestSignal = signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+        : AbortSignal.timeout(timeoutMs);
       const res = await fetch(url, {
         headers: {
           'User-Agent': DEFAULT_UA,
           Accept: '*/*',
           ...(referer ? { Referer: referer } : {}),
         },
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: requestSignal,
       });
       const buf = await res.arrayBuffer();
       const text = new TextDecoder(decodeAs).decode(buf);
@@ -92,6 +97,7 @@ export async function fetchText(url: string, opts: FetchOptions): Promise<FetchR
       return { text, status: res.status, latencyMs, bytes: buf.byteLength };
     } catch (e) {
       lastErr = e;
+      if (signal?.aborted) break;
       if (e instanceof UpstreamError && e.status !== null && e.status < 500 && e.status !== 429) {
         break;
       }
