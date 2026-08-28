@@ -1,10 +1,10 @@
+import { FUND_TYPE_FILTERS, type FundTypeFilter } from '@lookthru/shared/fund-types';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Change } from '../components/Money';
+import { ErrorState, FreshnessLine } from '../components/states';
 import { formatNav } from '../lib/format';
-import { FUND_TYPE_FILTERS, type FundTypeFilter } from '@lookthru/shared';
-import { searchFunds, shortType, type SearchHit } from '../lib/api';
+import { ApiError, searchFunds, shortType, type SearchHit } from '../lib/api';
 
 /** 与空态热门关键词同一套 chip，选中态复用本页已有的 accent 描边/底。 */
 const CHIP =
@@ -35,12 +35,15 @@ export function Search() {
     return () => clearTimeout(t);
   }, [input]);
 
-  const { data, isFetching, isError } = useQuery({
+  const { data, isFetching, isError, error, refetch } = useQuery({
     queryKey: ['search', debounced, typeFilter],
-    queryFn: () => searchFunds(debounced, typeFilter),
+    queryFn: ({ signal }) => searchFunds(debounced, typeFilter, signal),
     enabled: debounced.length > 0,
     staleTime: 60_000,
   });
+
+  const listUnavailable = isError && error instanceof ApiError && error.status === 503;
+  const hits = data?.hits;
 
   const isPinyin = /^[a-z]+$/i.test(debounced);
 
@@ -119,20 +122,37 @@ export function Search() {
           )}
 
           {isFetching && !data && <Hint>搜索中…</Hint>}
-          {isError && <Hint>搜索失败，请稍后重试</Hint>}
-          {data && data.length === 0 && <Hint>没有找到相关基金</Hint>}
+          {listUnavailable && (
+            <ErrorState
+              description="基金列表暂不可用"
+              onRetry={() => {
+                void refetch();
+              }}
+            />
+          )}
+          {isError && !listUnavailable && <Hint>搜索失败，请稍后重试</Hint>}
+          {hits && hits.length === 0 && !listUnavailable && <Hint>没有找到相关基金</Hint>}
 
-          {data && data.length > 0 && (
+          {hits && hits.length > 0 && (
             <>
               <div className="px-0.5 pt-0.5 pb-1.5 text-[11.5px] text-ink-faint">
-                找到 {data.length} 只相关基金
+                找到 {hits.length} 只相关基金
               </div>
-              {data.map((hit, i) => (
+              {data?.stale && (
+                <FreshnessLine
+                  at={new Date()}
+                  failing
+                  onRetry={() => {
+                    void refetch();
+                  }}
+                />
+              )}
+              {hits.map((hit, i) => (
                 <ResultRow
                   key={hit.code}
                   hit={hit}
                   keyword={debounced}
-                  last={i === data.length - 1}
+                  last={i === hits.length - 1}
                 />
               ))}
             </>
