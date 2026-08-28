@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fundMatchesTypeFilter, parseFundTypeFilter } from '../packages/shared/src/index';
+import { fundMatchesTypeFilter, parseFundTypeFilter } from '../packages/shared/src/fund-types';
 import {
   createFundListMemory,
+  expireFundListMemory,
+  INDEX_BACKOFF_MS,
   loadFundSearchIndex,
   parseFundListPayload,
+  PRODUCTION_MIN_FUNDS,
   type FundListIndex,
 } from '../apps/api/src/fund-list';
 import {
@@ -174,8 +177,9 @@ describe('东财回源边界', () => {
     const upstream = vi.fn(async () => {
       throw new Error('不应请求东财 suggest');
     });
-    const hits = await searchFundsForQuery('白酒', 'all', index, upstream);
-    expect(codes(hits)).toEqual(['161725']);
+    const result = await searchFundsForQuery('白酒', 'all', index, upstream);
+    expect(codes(result.hits)).toEqual(['161725']);
+    expect(result.degraded).toBe(false);
     expect(upstream).not.toHaveBeenCalled();
   });
 
@@ -205,8 +209,9 @@ describe('东财回源边界', () => {
         },
       ];
     });
-    const hits = await searchFundsForQuery('999999', 'all', index, upstream);
-    expect(codes(hits)).toEqual(['999999']);
+    const result = await searchFundsForQuery('999999', 'all', index, upstream);
+    expect(codes(result.hits)).toEqual(['999999']);
+    expect(result.degraded).toBe(false);
     expect(upstream).toHaveBeenCalledOnce();
   });
 
@@ -214,8 +219,25 @@ describe('东财回源边界', () => {
     const upstream = vi.fn(async () => {
       throw new Error('不应请求东财 suggest');
     });
-    expect(await searchFundsForQuery('不存在的主题', 'all', index, upstream)).toEqual([]);
-    expect(await searchFundsForQuery('zzzzzz', 'all', index, upstream)).toEqual([]);
+    expect(await searchFundsForQuery('不存在的主题', 'all', index, upstream)).toMatchObject({
+      hits: [],
+      degraded: false,
+    });
+    expect(await searchFundsForQuery('zzzzzz', 'all', index, upstream)).toMatchObject({
+      hits: [],
+      degraded: false,
+    });
+    expect(upstream).not.toHaveBeenCalled();
+  });
+  it('名称搜索在无索引时标记 degraded 且不打东财', async () => {
+    const upstream = vi.fn(async () => {
+      throw new Error('不应请求东财 suggest');
+    });
+    expect(await searchFundsForQuery('白酒', 'all', null, upstream)).toEqual({
+      hits: [],
+      degraded: true,
+      stale: false,
+    });
     expect(upstream).not.toHaveBeenCalled();
   });
 });
@@ -283,5 +305,142 @@ describe('基金列表内存缓存', () => {
     await loadFundSearchIndex(env, 31 * 60 * 1000, memory);
     expect(gets).toBe(1);
     expect(heads).toBe(1);
+  });
+});
+
+describe('isolate 索引 singleflight / backoff / 替换阈值', () => {
+  const payload = { generatedAt: '2026-08-28T00:00:00.000Z', funds: FIXTURE_FUNDS };
+
+  function envWith(
+    handlers: {
+      get?: () => Promise<{ etag: string; json: () => Promise<unknown> } | null>;
+      head?: () => Promise<{ etag: string } | null>;
+    },
+  ) {
+    return {
+      ARCHIVE: {
+        head: handlers.head ?? (async () => ({ etag: 'etag-v1' })),
+        get: handlers.get ?? (async () => ({ etag: 'etag-v1', json: async () => payload })),
+      },
+    } as never;
+  }
+
+  it('N 个并发冷启动只 get/parse 一次', async () => {
+    let gets = 0;
+    let parses = 0;
+    const env = envWith({
+      get: async () => {
+        gets += 1;
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return {
+          etag: 'etag-v1',
+          json: async () => {
+            parses += 1;
+            return payload;
+          },
+        };
+      },
+    });
+    const memory = createFundListMemory();
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => loadFundSearchIndex(env, 0, memory, { minFunds: 1 })),
+    );
+    expect(gets).toBe(1);
+    expect(parses).toBe(1);
+    expect(new Set(results).size).toBe(1);
+    expect(results[0]?.funds).toHaveLength(FIXTURE_FUNDS.length);
+  });
+
+  it('R2 全失败且无索引时返回 null，backoff 内不再打 R2', async () => {
+    let gets = 0;
+    const env = envWith({
+      get: async () => {
+        gets += 1;
+        throw new Error('r2 down');
+      },
+    });
+    const memory = createFundListMemory();
+    expect(await loadFundSearchIndex(env, 0, memory)).toBeNull();
+    expect(await loadFundSearchIndex(env, 5_000, memory)).toBeNull();
+    expect(gets).toBe(1);
+    expect(memory.failUntil).toBe(INDEX_BACKOFF_MS);
+  });
+
+  it('R2 失败后仍返回 last-known-good 并标 stale', async () => {
+    let gets = 0;
+    let fail = false;
+    const env = envWith({
+      head: async () => {
+        if (fail) throw new Error('r2 down');
+        return { etag: 'etag-v1' };
+      },
+      get: async () => {
+        gets += 1;
+        if (fail) throw new Error('r2 down');
+        return { etag: 'etag-v1', json: async () => payload };
+      },
+    });
+    const memory = createFundListMemory();
+    const first = await loadFundSearchIndex(env, 0, memory, { minFunds: 1 });
+    fail = true;
+    expireFundListMemory(memory, 31 * 60 * 1000);
+    const second = await loadFundSearchIndex(env, 31 * 60 * 1000, memory, { minFunds: 1 });
+    expect(second).toBe(first);
+    expect(memory.stale).toBe(true);
+    const third = await loadFundSearchIndex(env, 31 * 60 * 1000 + 5_000, memory, { minFunds: 1 });
+    expect(third).toBe(first);
+    expect(gets).toBe(1);
+  });
+
+  it('未达阈值的脏对象不能替换健康索引', async () => {
+    const memory = createFundListMemory();
+    const healthy = envWith({
+      get: async () => ({ etag: 'etag-v1', json: async () => payload }),
+    });
+    const first = await loadFundSearchIndex(healthy, 0, memory, { minFunds: 1 });
+    const corruptFunds = [
+      FIXTURE_FUNDS[0],
+      FIXTURE_FUNDS[1],
+      ...Array.from({ length: 20 }, (_, i) => ({ name: `脏行${i}` })),
+    ];
+    const corrupt = envWith({
+      head: async () => ({ etag: 'etag-corrupt' }),
+      get: async () => ({
+        etag: 'etag-corrupt',
+        json: async () => ({ generatedAt: '2026-08-29T00:00:00.000Z', funds: corruptFunds }),
+      }),
+    });
+    expireFundListMemory(memory, 31 * 60 * 1000);
+    const second = await loadFundSearchIndex(corrupt, 31 * 60 * 1000, memory);
+    expect(second).toBe(first);
+    expect(memory.index?.etag).toBe('etag-v1');
+    expect(memory.stale).toBe(true);
+  });
+
+  it('低于生产下限的夹具只有显式测试选项才允许替换', async () => {
+    const memory = createFundListMemory();
+    const firstEnv = envWith({
+      get: async () => ({ etag: 'etag-v1', json: async () => payload }),
+    });
+    const first = await loadFundSearchIndex(firstEnv, 0, memory, { minFunds: 1 });
+    const nextPayload = {
+      generatedAt: '2026-08-29T00:00:00.000Z',
+      funds: FIXTURE_FUNDS.slice(0, 3),
+    };
+    const nextEnv = envWith({
+      head: async () => ({ etag: 'etag-v2' }),
+      get: async () => ({ etag: 'etag-v2', json: async () => nextPayload }),
+    });
+    expireFundListMemory(memory, 31 * 60 * 1000);
+    const rejected = await loadFundSearchIndex(nextEnv, 31 * 60 * 1000, memory);
+    expect(rejected).toBe(first);
+    expect(rejected?.funds).toHaveLength(FIXTURE_FUNDS.length);
+
+    expireFundListMemory(memory, 62 * 60 * 1000);
+    const accepted = await loadFundSearchIndex(nextEnv, 62 * 60 * 1000, memory, { minFunds: 1 });
+    expect(accepted).not.toBe(first);
+    expect(accepted?.funds).toHaveLength(3);
+    expect(accepted?.etag).toBe('etag-v2');
+    expect(PRODUCTION_MIN_FUNDS).toBe(10_000);
   });
 });
