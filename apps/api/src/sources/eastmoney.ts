@@ -45,7 +45,7 @@ export async function fetchFundList(): Promise<FundBrief[]> {
     timeoutMs: 30_000,
   });
   // 文件带 BOM
-  const rows = extractJsVar(text.replace(/^﻿/, ''), 'r');
+  const rows = extractJsVar(text.replace(/^\uFEFF/, ''), 'r');
   if (!Array.isArray(rows)) throw new UpstreamError('基金列表解析失败', null, 'em:fundlist');
 
   const out: FundBrief[] = [];
@@ -245,10 +245,13 @@ interface RawStock {
   INDEXNAME?: string;
 }
 
-export async function fetchHoldings(code: string): Promise<HoldingsResult> {
+export async function fetchHoldings(code: string, signal?: AbortSignal): Promise<HoldingsResult> {
   const raw = await fetchJson<RawHoldingsResp>(holdingsUrl(code), {
     source: 'em:holdings',
-    timeoutMs: 15_000,
+    // 用户冷启动和 waitUntil 后台刷新共用；必须在 Worker 的后台存活窗口内有界完成。
+    timeoutMs: 4_000,
+    retries: 0,
+    signal,
   });
   return parseHoldings(raw);
 }
@@ -380,6 +383,8 @@ interface RawQuote {
 export async function fetchQuotes(
   secids: string[],
   host: string = EM_QUOTE_HOSTS[0],
+  signal?: AbortSignal,
+  timeoutMs = 10_000,
 ): Promise<Map<string, Quote>> {
   const out = new Map<string, Quote>();
   const uniq = [...new Set(secids)];
@@ -389,9 +394,10 @@ export async function fetchQuotes(
     const raw = await fetchJson<RawQuoteResp>(quotesUrl(chunk, host), {
       source: `em:quotes@${host}`,
       referer: REFERER_FUND,
-      timeoutMs: 10_000,
+      timeoutMs,
       // 主机不可用时不在这层重试，交给上层换主机 —— 重试同一台坏主机纯属浪费
       retries: 0,
+      signal,
     });
     for (const q of raw.data?.diff ?? []) {
       const price = Number(q.f2);
@@ -455,11 +461,14 @@ export interface FundSearchHit {
   isMoneyFund: boolean;
 }
 
-export async function searchFunds(keyword: string): Promise<FundSearchHit[]> {
+export async function searchFunds(keyword: string, signal?: AbortSignal): Promise<FundSearchHit[]> {
   const raw = await fetchJsonp<RawSearchResp>(searchUrl(keyword), {
     source: 'em:search',
     referer: REFERER_FUND,
-    timeoutMs: 10_000,
+    // 搜索只有一个候选源；失败应尽快显式返回，不能让过期输入在后台重试到 20–30 秒。
+    timeoutMs: 4_000,
+    retries: 0,
+    signal,
   });
   return parseSearchResponse(raw);
 }
